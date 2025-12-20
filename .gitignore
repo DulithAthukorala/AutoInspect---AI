@@ -1,1 +1,9 @@
 /data
+/yolo_data
+/runs
+venv*/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.pt
