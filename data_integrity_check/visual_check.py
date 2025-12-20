@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 
-COCO_ROOT = Path(r"data/CarDD_COCO")
+COCO_ROOT = Path(r"./data/CarDD_COCO")
 ANN_PATH = COCO_ROOT / "annotations" / "instances_train2017.json"
 IMG_DIR  = COCO_ROOT / "train2017"
 

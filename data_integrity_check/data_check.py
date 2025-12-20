@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from collections import Counter
 
-COCO_ROOT = Path(r"data/CarDD_COCO")
+COCO_ROOT = Path(r"./data/CarDD_COCO")
 ANN_PATH = COCO_ROOT / "annotations" / "instances_train2017.json"
 
 def main():
