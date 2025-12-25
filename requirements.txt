@@ -9,6 +9,5 @@ pydantic
 fastapi
 uvicorn
 scikit-learn
-shap
 plotly
 albumentations
