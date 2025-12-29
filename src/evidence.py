@@ -1,18 +1,19 @@
 import numpy as np
+from src.logic import CaseEvidence, DamageInstance
 
-def extract_evidence(yolo_result):
-    evidence = {
-        "num_damages": 0,
-        "damages": [],
-        "total_damage_ratio": 0.0  # informational only
-    }
+def extract_evidence(yolo_result, image_id: str):
+    damages = []
 
     if yolo_result.masks is None:
-        return evidence
+        return CaseEvidence(
+            image_id=image_id,
+            damages=[],
+            overlaps=None
+        )
 
-    masks = yolo_result.masks.data.cpu().numpy()          # (N, H, W)
-    classes = yolo_result.boxes.cls.cpu().numpy()         # (N,)
-    confidences = yolo_result.boxes.conf.cpu().numpy()    # (N,)
+    masks = yolo_result.masks.data.cpu().numpy()
+    classes = yolo_result.boxes.cls.cpu().numpy()
+    confidences = yolo_result.boxes.conf.cpu().numpy()
     names = yolo_result.names
 
     img_h, img_w = yolo_result.orig_shape[:2]
@@ -21,14 +22,16 @@ def extract_evidence(yolo_result):
         mask_area = np.sum(mask > 0.5)
         area_ratio = mask_area / (img_h * img_w)
 
-        damage = {
-            "damage_type": names[int(cls_id)],
-            "confidence": float(conf),
-            "area_ratio": float(area_ratio)
-        }
+        damages.append(
+            DamageInstance(
+                damage_type=names[int(cls_id)],
+                confidence=float(conf),
+                area_ratio=float(area_ratio)
+            )
+        )
 
-        evidence["damages"].append(damage)
-        evidence["total_damage_ratio"] += area_ratio
-
-    evidence["num_damages"] = len(evidence["damages"])
-    return evidence
+    return CaseEvidence(
+        image_id=image_id,
+        damages=damages,
+        overlaps=None
+    )

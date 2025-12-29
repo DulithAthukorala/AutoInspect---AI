@@ -12,7 +12,7 @@ class DamageInstance:
 @dataclass(frozen=True)
 class CaseEvidence:
     image_id: str
-    damages: List[DamageInstance]
+    damages: List[DamageInstance] 
     overlaps: Optional[Dict[Tuple[int, int], float]] = None  # optional: overlaps between damages (i,j)->overlap_ratio
 
 
@@ -37,6 +37,7 @@ DAMAGE_TYPE_WEIGHT = {
     "dent": 1.5,
     "crack": 2.0,
     "glass": 2.5,
+    "tire_flat": 3.0
 }
 
 def type_weight(damage_type: str) -> float:
