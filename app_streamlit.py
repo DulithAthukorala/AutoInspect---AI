@@ -7,14 +7,14 @@ from PIL import Image
 from src.inference import DamageDetector
 from src.evidence import extract_evidence
 from src.logic import decide_case
-from src.explain import generate_explanation, explain_change
+from src.explain import generate_explanation
 
 
 # ---------- Config ----------
 DEFAULT_WEIGHTS = "runs/segment/train/weights/best.pt"
 WEIGHTS_PATH = os.getenv("WEIGHTS_PATH", DEFAULT_WEIGHTS)
 
-# Human words (no dev labels)
+# Human-friendly words
 SEVERITY_WORDS = {
     "LOW": "Minor",
     "MEDIUM": "Moderate",
@@ -22,7 +22,7 @@ SEVERITY_WORDS = {
 }
 
 ROUTE_WORDS = {
-    "AUTO": "Automatic (no human needed)",
+    "AUTO": "Automatic (No Human review needed)",
     "MANUAL_REVIEW": "Human review needed",
 }
 
@@ -40,31 +40,34 @@ def sure_text(score: float) -> str:
     return "Unknown"
 
 
-@st.cache_resource
+@st.cache_resource # to avoid reloading model on every interaction
 def load_detector(weights_path: str) -> DamageDetector:
-    # Loads model once (very important for performance)
     return DamageDetector(weights_path)
 
 
 # ---------- UI ----------
 st.set_page_config(page_title="AutoInspect AI", layout="wide")
-st.title("AutoInspect AI 🚗")
-st.caption("Upload a car image. The system will detect damage, estimate severity/cost, and explain it in simple English.")
+st.title("AutoInspect AI - Automated car Damage Detector")
+st.markdown("Upload Your Damaged Car Image for Automated Damage Assessment and Repair Cost Estimation")
 
 with st.sidebar:
-    st.header("Settings")
-    st.text_input("Model weights path", value=WEIGHTS_PATH, key="weights_path")
-    show_tech = st.toggle("Show technical details", value=False)
-    st.divider()
-    st.write("Tip: For deployment, set an env var `WEIGHTS_PATH` to your `best.pt`.")
+    with st.expander("⚙️ Settings"):
+        weights_path = st.text_input(
+            "Path For the Model",
+            value=WEIGHTS_PATH,
+            key="weights_path"
+        )
+        show_tech = st.toggle("Show technical details", value=False)
+        if show_tech:
+            st.markdown("""_Technical details included in the Bottom For Developers_""")
 
 uploaded = st.file_uploader("Upload an image (jpg / png)", type=["jpg", "jpeg", "png"])
 
 if uploaded:
-    image_id = uploaded.name
-    img = Image.open(uploaded).convert("RGB")
+    image_id = uploaded.name   # use filename as image_id
+    img = Image.open(uploaded).convert("RGB")   # ensure 3 channels
 
-    col1, col2 = st.columns([1.1, 0.9], gap="large")
+    col1, col2 = st.columns([1.1, 0.9], gap="large") 
 
     with col1:
         st.subheader("Image")
@@ -77,7 +80,6 @@ if uploaded:
     decision = decide_case(evidence)
 
     explanation = generate_explanation(evidence, decision)
-    change = explain_change(evidence, decision)
 
     # --- Human-friendly summary ---
     severity_word = SEVERITY_WORDS.get(decision.severity, decision.severity)
@@ -85,19 +87,32 @@ if uploaded:
     sure_word = sure_text(float(decision.confidence_score))
 
     with col2:
-        st.subheader("Result (simple)")
+        st.subheader("Our Estimation Of Your Car Damage")
         st.metric("Damage level", severity_word)
-        st.metric("Estimated repair cost", f"{decision.estimated_cost_lkr:,} LKR")
-        st.metric("What happens next", route_word)
-        st.write(f"**How sure are we?** {sure_word}")
+        if route_word == "Human review needed":
+            st.metric("Estimated repair cost", f"{decision.estimated_cost_lkr:,} LKR","(Final cost may vary after human review)")
+        else:
+            st.metric("Estimated repair cost", f"{decision.estimated_cost_lkr:,} LKR")
+        if route_word == "Human review needed":
+            st.warning("⚠️ This case requires human review due to the uncertainty of the damage.")
+            st.write("Our Customer Support team will get back to you shortly.")
+        else:
+            st.success("✅ This case can be processed automatically.")
+            st.write(f"**How sure are we?** {sure_word}")
 
         st.divider()
-        st.subheader("Why?")
-        # keep it readable: show the explain.py output (already structured)
-        st.text(explanation)
+        more = st.button("Click Here to See More Details")
+        if more:
+            show_tech = True
 
-        st.subheader("Change")
-        st.write(change)
+
+
+
+
+
+
+
+
 
     # --- Optional technical details ---
     if show_tech:
