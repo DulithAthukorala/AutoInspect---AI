@@ -25,38 +25,6 @@ def summarize_detections(evidence: CaseEvidence) -> List[str]:
     return out
 
 
-def explain_change(evidence: CaseEvidence, decision: Decision) -> str:
-    """
-    Explains what would need to change in the detected damage
-    for the severity decision to change.
-    """
-    # LOW → MEDIUM
-    if decision.severity == "LOW":
-        limit = SEVERITY_THRESHOLDS["LOW"]
-        return (
-            "This case is LOW severity.\n"
-            f"If the overall damage became larger than {limit*100:.1f}% of the image, "
-            "the severity would increase to MEDIUM."
-        )
-
-    # MEDIUM → HIGH
-    if decision.severity == "MEDIUM":
-        limit = SEVERITY_THRESHOLDS["MEDIUM"]
-        return (
-            "This case is MEDIUM severity.\n"
-            f"If the overall damage became larger than {limit*100:.1f}% of the image, "
-            "the severity would increase to HIGH."
-        )
-
-    # HIGH → MEDIUM
-    limit = SEVERITY_THRESHOLDS["MEDIUM"]
-    return (
-        "This case is HIGH severity.\n"
-        f"If the overall damage were reduced to {limit*100:.1f}% of the image or less, "
-        "the severity would drop to MEDIUM."
-    )
-
-
 
 def generate_explanation(evidence: CaseEvidence, decision: Decision) -> str:
     """
@@ -81,9 +49,5 @@ def generate_explanation(evidence: CaseEvidence, decision: Decision) -> str:
     lines.append("Decision reasons:")
     lines.append(_bullet(decision.reasons))
     lines.append("")
-
-    # Change explanation
-    lines.append("Change:")
-    lines.append(explain_change(evidence, decision))
 
     return "\n".join(lines)

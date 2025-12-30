@@ -61,6 +61,10 @@ def weighted_damage_score(damages: List[DamageInstance]) -> float:
     return sum(d.area_ratio * type_weight(d.damage_type) for d in damages)
 
 
+def _validate_damage(d: DamageInstance) -> DamageInstance:
+    c = min(max(d.confidence, 0.0), 1.0)
+    a = min(max(d.area_ratio, 0.0), 1.0)
+    return DamageInstance(d.damage_type, c, a)
 
 
 
@@ -113,6 +117,8 @@ COST_PER_PERCENT_LKR = {
     "HIGH": 16000,
 }
 
+MAX_EXTRA_LKR = {"LOW": 60000, "MEDIUM": 180000, "HIGH": 600000}
+
 
 def estimate_cost_lkr(severity: str, weighted_score: float) -> Tuple[int, List[str]]:
     """
@@ -124,11 +130,12 @@ def estimate_cost_lkr(severity: str, weighted_score: float) -> Tuple[int, List[s
     base = BASE_COST_LKR[severity]
     per_pct = COST_PER_PERCENT_LKR[severity]
     extra = int(round((weighted_score * 100.0) * per_pct))
+    extra = min(extra, MAX_EXTRA_LKR[severity])
     cost = int(base + extra)
 
-    reasons.append(f"Base cost for {severity} = {base} LKR.")
-    reasons.append(f"Extra cost = (weighted_score*100)*{per_pct} = {extra} LKR.")
-    reasons.append(f"Estimated cost = {cost} LKR.")
+    reasons.append(f"Base cost   : {base} LKR.")
+    reasons.append(f"Extra cost  : {extra} LKR.")
+    reasons.append(f"Estimated cost : {cost} LKR.")
     return cost, reasons
 
 
@@ -193,7 +200,7 @@ def decide_case(evidence: CaseEvidence) -> Decision:
     reasons: List[str] = []
 
     conf_score = aggregate_confidence(evidence.damages)
-    reasons.append(f"Aggregate confidence score = {conf_score:.2f} (area-weighted).")
+    reasons.append(f"Our Model's confidence score = {conf_score:.2f}.")
 
     severity, score, sev_reasons = assign_severity(evidence.damages)
     reasons.extend(sev_reasons)
