@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from src.inference import DamageDetector
-from src.evidence import extract_evidence
+from src.evidence import extract_evidence, _bbox_area_xyxy
 from src.logic import decide_case
 from src.explain import generate_explanation, explain_change
 
