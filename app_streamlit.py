@@ -9,7 +9,7 @@ from src.logic import decide_case
 from src.explain import generate_explanation
 
 
-# ---------- Config ----------
+
 DEFAULT_WEIGHTS = "runs/segment/train/weights/best.pt"
 WEIGHTS_PATH = os.getenv("WEIGHTS_PATH", DEFAULT_WEIGHTS)
 
@@ -65,7 +65,6 @@ def filter_reasons_for_manual_review(reasons: list[str]) -> list[str]:
     return out
 
 
-# ---------- Cache models ----------
 @st.cache_resource
 def load_damage_detector(weights_path: str) -> DamageDetector:
     return DamageDetector(weights_path)
@@ -76,7 +75,6 @@ def load_vehicle_masker() -> VehicleMasker:
     return VehicleMasker("yolov8n-seg.pt")
 
 
-# ---------- Page ----------
 st.set_page_config(page_title="AutoInspect AI", page_icon="🚗", layout="wide")
 
 st.markdown(
@@ -151,7 +149,17 @@ with st.sidebar:
         "- Keep image sharp"
     )
 
-# ---------- Upload ----------
+
+
+
+
+
+
+
+
+
+
+# Image uploader
 uploaded = st.file_uploader("📤 Upload an image (jpg / jpeg / png)", type=["jpg", "jpeg", "png"])
 if not uploaded:
     st.info("Upload an image to start.")
@@ -160,7 +168,13 @@ if not uploaded:
 image_id = uploaded.name
 img = Image.open(uploaded).convert("RGB")
 
-# ---------- Layout ----------
+
+
+
+
+
+
+# Layout with two columns in the UI
 col1, col2 = st.columns([1.15, 0.85], gap="large")
 
 with col1:
