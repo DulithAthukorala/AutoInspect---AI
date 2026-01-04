@@ -90,18 +90,40 @@ def to_jsonable_decision(d: Decision) -> Dict[str, Any]:
     }
 
 
-def to_jsonable_evidence(e: CaseEvidence) -> Dict[str, Any]:
-    return {
-        "image_id": e.image_id,
-        "vehicle_area_ratio": getattr(e, "vehicle_area_ratio", None),
-        "damages": [
-            {
-                "damage_type": x.damage_type,
-                "confidence": float(x.confidence),
-                "area_ratio": float(x.area_ratio),
-            }
-            for x in e.damages
-        ],
-    }
+@app.post("/assess", response_model=AssessResponse)
+async def assess_image(file: UploadFile = File(...)):
+    if file.content_type not in {"image/jpeg", "image/png", "image/jpg"}:
+        raise HTTPException(status_code=400, detail="Upload a JPG or PNG image.")
 
+    try:
+        raw = await file.read()
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read image file.")
+
+    image_id = file.filename or "upload"
+
+    detector, vehicle_masker = get_models()
+
+    # 1) Vehicle mask
+    vehicle_mask = vehicle_masker.predict_vehicle_mask(img)
+
+    # 2) Damage prediction
+    yolo_res = detector.predict(img)
+
+    # 3) Evidence (numeric)
+    evidence = extract_evidence(yolo_res, image_id=image_id, vehicle_mask=vehicle_mask)
+
+    # 4) Decision (deterministic)
+    decision = decide_case(evidence)
+
+    # 5) Explanation (human-facing, derived only from evidence + decision)
+    explanation = generate_explanation(evidence, decision)
+
+    payload = {
+        **to_jsonable_evidence(evidence),
+        "decision": to_jsonable_decision(decision),
+        "explanation": explanation,
+    }
+    return JSONResponse(payload)
 
