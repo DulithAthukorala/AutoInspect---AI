@@ -66,9 +66,7 @@ def get_models() -> tuple[DamageDetector, VehicleMasker]:
     return _detector, _vehicle_masker
 
 
-# ----------------------------
-# FastAPI app
-# ----------------------------
+
 app = FastAPI(title="AutoInspect AI API", version="1.0.0")
 
 
