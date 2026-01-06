@@ -50,9 +50,7 @@ class AssessResponse(BaseModel):
     explanation: str
 
 
-# ----------------------------
-# Model singletons (loaded once)
-# ----------------------------
+
 _detector: Optional[DamageDetector] = None
 _vehicle_masker: Optional[VehicleMasker] = None
 
