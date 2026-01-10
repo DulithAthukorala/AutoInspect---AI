@@ -11,7 +11,14 @@ from PIL import Image
 from src.inference import DamageDetector
 from src.vehicle_mask import VehicleMasker
 from src.evidence import extract_evidence
-from src.logic import decide_case, CaseEvidence, Decision
+from src.logic import (
+    decide_case,
+    CaseEvidence,
+    Decision,
+    filter_meaningful_damages,
+    confidence_breakdown,
+)
+
 from src.explain import generate_explanation
 
 from src.db import init_db, insert_case, get_case
@@ -38,6 +45,13 @@ class DamageOut(BaseModel):
     area_ratio: float  # vs vehicle
 
 
+class ConfidenceBreakdownOut(BaseModel):
+    detection: float
+    coverage: float
+    consistency: float
+    aggregate: float
+
+
 class DecisionOut(BaseModel):
     severity: Optional[str]
     route: str
@@ -57,6 +71,7 @@ class AssessResponse(BaseModel):
     image_id: str
     vehicle_area_ratio: Optional[float]
     damages: List[DamageOut]
+    confidence_breakdown: ConfidenceBreakdownOut
     decision: DecisionOut
     explanation: str
 
@@ -149,6 +164,14 @@ def run_pipeline(img: Image.Image, image_id: str) -> Dict[str, Any]:
     # 3) Evidence
     evidence = extract_evidence(yolo_res, image_id=image_id, vehicle_mask=vehicle_mask)
 
+    # ---- Confidence decomposition (same inputs as logic) ----
+    meaningful, _ = filter_meaningful_damages(evidence.damages)
+    _, conf_parts = confidence_breakdown(
+        meaningful=meaningful,
+        vehicle_area_ratio=evidence.vehicle_area_ratio,
+        overlaps=evidence.overlaps,
+    )
+
     # 4) Decision
     decision = decide_case(evidence)
 
@@ -157,6 +180,7 @@ def run_pipeline(img: Image.Image, image_id: str) -> Dict[str, Any]:
 
     return {
         **to_jsonable_evidence(evidence),
+        "confidence_breakdown": conf_parts,
         "decision": to_jsonable_decision(decision),
         "explanation": explanation,
         "meta": {
