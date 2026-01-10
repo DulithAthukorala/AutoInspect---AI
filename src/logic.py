@@ -218,6 +218,68 @@ def vehicle_visibility_ok(vehicle_area_ratio: Optional[float]) -> bool:
 
 
 # ============================================================
+# Confidence Decomposition (NEW)
+# ============================================================
+
+def coverage_confidence(vehicle_area_ratio: Optional[float]) -> float:
+    """
+    Coverage confidence based on how well the vehicle fills the frame.
+    - None => unknown => 0.0
+    - Outside [MIN, MAX] => 0.0 (also handled by routing)
+    - Inside => score peaks near TARGET and falls as you get too close/far.
+    """
+    if vehicle_area_ratio is None:
+        return 0.0
+
+    var = float(vehicle_area_ratio)
+    if var < MIN_VEHICLE_AREA_RATIO or var > MAX_VEHICLE_AREA_RATIO:
+        return 0.0
+
+    # Target framing (tunable). 0.35 means car reasonably visible, not too close.
+    TARGET = 0.35
+    dist = abs(var - TARGET)
+    cov = 1.0 - (dist / TARGET)
+    return _clamp(cov, 0.0, 1.0)
+
+
+def consistency_confidence(overlaps: Optional[Dict[Tuple[int, int], float]]) -> float:
+    """
+    Consistency confidence from mask overlap (IoU).
+    - No overlaps => 1.0 (no contradiction signal)
+    - High overlap => lower confidence
+    """
+    if not overlaps:
+        return 1.0
+    max_iou = max(float(v) for v in overlaps.values())
+    return _clamp(1.0 - max_iou, 0.0, 1.0)
+
+
+def confidence_breakdown(
+    meaningful: List[DamageInstance],
+    vehicle_area_ratio: Optional[float],
+    overlaps: Optional[Dict[Tuple[int, int], float]],
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Returns (aggregate_conf, breakdown_dict)
+    aggregate = detection * coverage * consistency
+
+    Conservative by design:
+      - If coverage is unknown => aggregate drops => routes to manual.
+    """
+    det = aggregate_confidence(meaningful)
+    cov = coverage_confidence(vehicle_area_ratio)
+    con = consistency_confidence(overlaps)
+    agg = _clamp(det * cov * con, 0.0, 1.0)
+
+    return agg, {
+        "detection": float(det),
+        "coverage": float(cov),
+        "consistency": float(con),
+        "aggregate": float(agg),
+    }
+
+
+# ============================================================
 # Severity
 # ============================================================
 
@@ -384,9 +446,19 @@ def decide_case(evidence: CaseEvidence) -> Decision:
     meaningful, f = filter_meaningful_damages(evidence.damages)
     flags.extend(f)
 
-    # 1) Confidence (meaningful only)
-    conf_score = aggregate_confidence(meaningful)
-    reasons.append(f"Aggregate confidence (area-weighted) = {conf_score:.2f}.")
+    # 1) Confidence decomposition (meaningful only)
+    conf_score, conf_parts = confidence_breakdown(
+        meaningful=meaningful,
+        vehicle_area_ratio=evidence.vehicle_area_ratio,
+        overlaps=evidence.overlaps,
+    )
+    reasons.append(
+        "Confidence breakdown: "
+        f"detection={conf_parts['detection']:.2f}, "
+        f"coverage={conf_parts['coverage']:.2f}, "
+        f"consistency={conf_parts['consistency']:.2f} "
+        f"=> aggregate={conf_parts['aggregate']:.2f}."
+    )
 
     # Vehicle validity / framing guard:
     # If vehicle is not clearly detected, do not make claims (including NO_DAMAGE).
