@@ -40,19 +40,20 @@ class Decision:
     """
     Decision support output.
 
-    estimated_cost_lkr: point estimate (ONLY reliable when route == AUTO)
-    cost_range_lkr: (low, high) range estimate
+    Pricing rules (PHASE-1):
+      - If route != "AUTO", pricing MUST be None (no fake certainty).
+      - If severity == "NO_DAMAGE", pricing is 0.
     pricing_mode:
       - "NONE" (no damage)
       - "AUTO_POINT" (auto-approved with point estimate)
       - "AUTO_RANGE" (auto-approved but we prefer range messaging)
-      - "PENDING_REVIEW" (manual review)
+      - "PENDING_REVIEW" (manual review / needs human)
     """
-    severity: str
+    severity: Optional[str]  # can be None when we cannot safely assert a severity
     route: str
     confidence_score: float
-    estimated_cost_lkr: int
-    cost_range_lkr: Tuple[int, int]
+    estimated_cost_lkr: Optional[int]
+    cost_range_lkr: Optional[Tuple[int, int]]
     pricing_mode: str
     reasons: List[str]
     flags: List[str]
@@ -63,13 +64,10 @@ class Decision:
 # ============================================================
 
 # --- Noise suppression ---
-# These are NOT "cheating": they are deterministic gates against known detector noise.
 MIN_CONF_KEEP_DEFAULT = 0.35
 MIN_AREA_KEEP = 0.0008  # 0.08% of vehicle area
-# If total meaningful area is below this and no critical component -> "no damage"
 NO_DAMAGE_AREA_THRESHOLD = 0.0012  # 0.12% of vehicle area
 
-# More strict thresholds for noisy classes (optional)
 PER_CLASS_MIN_CONF_KEEP = {
     "lamp broken": 0.55,
     "scratch": 0.40,
@@ -94,16 +92,14 @@ MIN_TOTAL_AREA_FOR_TRUST = 0.0020
 MAX_OVERLAP_FOR_TRUST = 0.60
 
 # Vehicle framing thresholds (vehicle / image)
-# Too low => likely not a full car OR car not detected
-# Too high => close-up (ratio may be unstable)
 MIN_VEHICLE_AREA_RATIO = 0.08
 MAX_VEHICLE_AREA_RATIO = 0.90
+
 
 # ============================================================
 # Damage taxonomy + weights
 # ============================================================
 
-# Type weights influence severity score (still evidence-based)
 DAMAGE_TYPE_WEIGHT = {
     "scratch": 1.0,
     "dent": 1.5,
@@ -114,22 +110,23 @@ DAMAGE_TYPE_WEIGHT = {
     "tire flat": 3.0,
 }
 
+
 def type_weight(damage_type: str) -> float:
-    return DAMAGE_TYPE_WEIGHT.get(damage_type.lower(), 1.2)
+    return DAMAGE_TYPE_WEIGHT.get(str(damage_type).lower(), 1.2)
 
 
 def is_glass(damage_type: str) -> bool:
-    t = damage_type.lower()
+    t = str(damage_type).lower()
     return ("glass" in t) or ("windshield" in t) or ("window" in t)
 
 
 def is_tire(damage_type: str) -> bool:
-    t = damage_type.lower()
+    t = str(damage_type).lower()
     return ("tire" in t) or ("tyre" in t)
 
 
 def is_lamp(damage_type: str) -> bool:
-    t = damage_type.lower()
+    t = str(damage_type).lower()
     return ("lamp" in t) or ("headlight" in t) or ("tail light" in t)
 
 
@@ -165,7 +162,7 @@ def filter_meaningful_damages(damages: List[DamageInstance]) -> Tuple[List[Damag
         min_conf = PER_CLASS_MIN_CONF_KEEP.get(name, MIN_CONF_KEEP_DEFAULT)
         min_area = PER_CLASS_MIN_AREA_KEEP.get(name, MIN_AREA_KEEP)
 
-        # Critical components: allow small area but still require confidence
+        # Critical components: allow smaller area but still require confidence
         if is_glass(d.damage_type) or is_tire(d.damage_type) or is_lamp(d.damage_type):
             min_area = min(min_area, 0.0005)
 
@@ -183,9 +180,7 @@ def filter_meaningful_damages(damages: List[DamageInstance]) -> Tuple[List[Damag
 
 
 def aggregate_confidence(damages: List[DamageInstance]) -> float:
-    """
-    Area-weighted confidence.
-    """
+    """Area-weighted confidence (fallback to mean confidence if total area is 0)."""
     if not damages:
         return 0.0
     total_area = sum(d.area_ratio for d in damages)
@@ -195,17 +190,12 @@ def aggregate_confidence(damages: List[DamageInstance]) -> float:
 
 
 def weighted_damage_score(damages: List[DamageInstance]) -> float:
-    """
-    score = Σ(area_ratio * type_weight)
-    """
+    """score = Σ(area_ratio * type_weight)."""
     return sum(d.area_ratio * type_weight(d.damage_type) for d in damages)
 
 
 def summarize_by_type(damages: List[DamageInstance]) -> Dict[str, Dict[str, float]]:
-    """
-    Returns per-type totals:
-      {type: {"area": total_area, "max_conf": max_conf}}
-    """
+    """Returns per-type totals: {type: {"area": total_area, "max_conf": max_conf}}"""
     out: Dict[str, Dict[str, float]] = {}
     for d in damages:
         k = d.damage_type.lower()
@@ -214,6 +204,17 @@ def summarize_by_type(damages: List[DamageInstance]) -> Dict[str, Dict[str, floa
         out[k]["area"] += d.area_ratio
         out[k]["max_conf"] = max(out[k]["max_conf"], d.confidence)
     return out
+
+
+def vehicle_visibility_ok(vehicle_area_ratio: Optional[float]) -> bool:
+    """
+    Determines whether we can safely claim NO_DAMAGE.
+    If we don't have vehicle_area_ratio, visibility is unknown => NOT OK.
+    """
+    if vehicle_area_ratio is None:
+        return False
+    var = float(vehicle_area_ratio)
+    return (MIN_VEHICLE_AREA_RATIO <= var <= MAX_VEHICLE_AREA_RATIO)
 
 
 # ============================================================
@@ -241,21 +242,19 @@ def assign_severity(damages: List[DamageInstance]) -> Tuple[str, float, List[str
 # Pricing: component-aware + cosmetic range
 # ============================================================
 
-# Component replacement pricing (demo-grade deterministic)
 GLASS_REPAIR_LKR = 25000
 GLASS_REPLACE_LKR = 90000
 LAMP_REPLACE_LKR = 60000
 TIRE_REPLACE_LKR = 30000
 
-# Decide glass repair vs replace based on ratio (vs vehicle)
 GLASS_REPLACE_RATIO_THRESHOLD = 0.010  # 1.0% of vehicle area
 
-# Cosmetic ranges by severity (not single point)
 COSMETIC_RANGE_LKR = {
     "LOW": (0, 25000),
     "MEDIUM": (25000, 120000),
     "HIGH": (120000, 400000),
 }
+
 
 def cosmetic_cost_range(severity: str, score: float) -> Tuple[int, int, int, List[str]]:
     """
@@ -265,7 +264,6 @@ def cosmetic_cost_range(severity: str, score: float) -> Tuple[int, int, int, Lis
     reasons: List[str] = []
     lo, hi = COSMETIC_RANGE_LKR[severity]
 
-    # Map score to [0,1] within the severity bucket
     if severity == "LOW":
         denom = max(SEVERITY_THRESHOLDS["LOW"], 1e-6)
         t = _clamp(score / denom, 0.0, 1.0)
@@ -273,7 +271,6 @@ def cosmetic_cost_range(severity: str, score: float) -> Tuple[int, int, int, Lis
         denom = max(SEVERITY_THRESHOLDS["MEDIUM"] - SEVERITY_THRESHOLDS["LOW"], 1e-6)
         t = _clamp((score - SEVERITY_THRESHOLDS["LOW"]) / denom, 0.0, 1.0)
     else:
-        # HIGH: let it saturate by 0.10 score
         t = _clamp(score / 0.10, 0.0, 1.0)
 
     point = int(round(lo + t * (hi - lo)))
@@ -300,27 +297,21 @@ def component_pricing(damages: List[DamageInstance]) -> Tuple[int, List[str], Li
     if glass_area > 0:
         if glass_area >= GLASS_REPLACE_RATIO_THRESHOLD:
             comp_cost += GLASS_REPLACE_LKR
-            reasons.append(
-                f"Glass damage ratio={glass_area:.4f} => replacement needed => +{GLASS_REPLACE_LKR} LKR."
-            )
+            reasons.append(f"Glass ratio={glass_area:.4f} => replacement => +{GLASS_REPLACE_LKR} LKR.")
             flags.append("GLASS_REPLACE")
         else:
             comp_cost += GLASS_REPAIR_LKR
-            reasons.append(
-                f"Glass damage ratio={glass_area:.4f} => repair likely => +{GLASS_REPAIR_LKR} LKR."
-            )
+            reasons.append(f"Glass ratio={glass_area:.4f} => repair => +{GLASS_REPAIR_LKR} LKR.")
             flags.append("GLASS_REPAIR")
 
     # Tire
-    tire_present = any(is_tire(d.damage_type) for d in damages)
-    if tire_present:
+    if any(is_tire(d.damage_type) for d in damages):
         comp_cost += TIRE_REPLACE_LKR
         reasons.append(f"Tire issue detected => +{TIRE_REPLACE_LKR} LKR.")
         flags.append("TIRE_REPLACE")
 
     # Lamp
-    lamp_present = any(is_lamp(d.damage_type) for d in damages)
-    if lamp_present:
+    if any(is_lamp(d.damage_type) for d in damages):
         comp_cost += LAMP_REPLACE_LKR
         reasons.append(f"Lamp issue detected => +{LAMP_REPLACE_LKR} LKR.")
         flags.append("LAMP_REPLACE")
@@ -389,38 +380,42 @@ def decide_case(evidence: CaseEvidence) -> Decision:
     reasons: List[str] = []
     flags: List[str] = []
 
-    # 0) Normalize + filter noise (deterministic)
+    # 0) Normalize + filter noise
     meaningful, f = filter_meaningful_damages(evidence.damages)
     flags.extend(f)
 
-    # 1) confidence (computed on meaningful only)
+    # 1) Confidence (meaningful only)
     conf_score = aggregate_confidence(meaningful)
     reasons.append(f"Aggregate confidence (area-weighted) = {conf_score:.2f}.")
 
-    # Guard: if not a proper vehicle photo, do not claim "no damage"
+    # Vehicle validity / framing guard:
+    # If vehicle is not clearly detected, do not make claims (including NO_DAMAGE).
     if evidence.vehicle_area_ratio is not None and evidence.vehicle_area_ratio < MIN_VEHICLE_AREA_RATIO:
         return Decision(
-            severity="LOW",
+            severity=None,
             route="MANUAL_REVIEW",
             confidence_score=float(conf_score),
-            estimated_cost_lkr=0,
-            cost_range_lkr=(0, 0),
+            estimated_cost_lkr=None,
+            cost_range_lkr=None,
             pricing_mode="PENDING_REVIEW",
             reasons=[
                 "Vehicle not clearly detected in the photo.",
                 f"vehicle_area_ratio={evidence.vehicle_area_ratio:.2f} is too low.",
                 "Please upload a clear full-car photo.",
             ],
-            flags=["NOT_A_VALID_VEHICLE_VIEW"],
+            flags=flags + ["NOT_A_VALID_VEHICLE_VIEW"],
         )
 
-    # -------- NO DAMAGE SHORT-CIRCUIT --------
+    # -------- NO DAMAGE SHORT-CIRCUIT (SAFE) --------
     total_area = sum(d.area_ratio for d in meaningful)
     has_critical = any(is_glass(d.damage_type) or is_tire(d.damage_type) or is_lamp(d.damage_type) for d in meaningful)
 
-    if total_area < NO_DAMAGE_AREA_THRESHOLD and not has_critical:
+    vehicle_ok = vehicle_visibility_ok(evidence.vehicle_area_ratio)
+
+    # If vehicle visibility is OK and damage is below noise threshold, we can assert NO_DAMAGE.
+    if vehicle_ok and total_area < NO_DAMAGE_AREA_THRESHOLD and not has_critical:
         return Decision(
-            severity="LOW",
+            severity="NO_DAMAGE",
             route="AUTO",
             confidence_score=float(conf_score),
             estimated_cost_lkr=0,
@@ -433,11 +428,28 @@ def decide_case(evidence: CaseEvidence) -> Decision:
             flags=flags + ["NO_DAMAGE"],
         )
 
-    # 2) severity (meaningful only)
+    # If we detected nothing but visibility is unknown/insufficient, do NOT claim NO_DAMAGE.
+    if (not vehicle_ok) and len(meaningful) == 0:
+        return Decision(
+            severity=None,
+            route="MANUAL_REVIEW",
+            confidence_score=float(conf_score),
+            estimated_cost_lkr=None,
+            cost_range_lkr=None,
+            pricing_mode="PENDING_REVIEW",
+            reasons=[
+                "No damages detected, but vehicle visibility/framing is insufficient to confirm NO_DAMAGE.",
+                f"vehicle_area_ratio={evidence.vehicle_area_ratio}",
+                "Please upload a clear full-car photo.",
+            ],
+            flags=flags + ["VISIBILITY_INSUFFICIENT_FOR_NO_DAMAGE"],
+        )
+
+    # 2) Severity
     severity, score, sev_reasons = assign_severity(meaningful)
     reasons.extend(sev_reasons)
 
-    # 3) price: cosmetic range + component add-ons
+    # 3) Pricing candidates (only used if AUTO)
     cos_lo, cos_hi, cos_point, cos_reasons = cosmetic_cost_range(severity, score)
     reasons.extend(cos_reasons)
 
@@ -445,12 +457,11 @@ def decide_case(evidence: CaseEvidence) -> Decision:
     reasons.extend(comp_reasons)
     flags.extend(comp_flags)
 
-    # Total range and point
     total_lo = cos_lo + comp_cost
     total_hi = cos_hi + comp_cost
     total_point = cos_point + comp_cost
 
-    # 4) routing
+    # 4) Routing
     manual, route_reasons, route_flags = should_route_manual(
         damages=meaningful,
         conf_score=conf_score,
@@ -461,19 +472,19 @@ def decide_case(evidence: CaseEvidence) -> Decision:
     flags.extend(route_flags)
 
     if manual:
-        # IMPORTANT: If manual, we do not want a misleading number.
+        # PHASE-1 RULE: If manual, do NOT return ANY pricing numbers.
         return Decision(
             severity=severity,
             route="MANUAL_REVIEW",
             confidence_score=float(conf_score),
-            estimated_cost_lkr=0,
-            cost_range_lkr=(total_lo, total_hi),
+            estimated_cost_lkr=None,
+            cost_range_lkr=None,
             pricing_mode="PENDING_REVIEW",
             reasons=reasons,
             flags=flags,
         )
 
-    # AUTO: point estimate is OK (still store range for transparency)
+    # AUTO: pricing is allowed (point + range for transparency)
     return Decision(
         severity=severity,
         route="AUTO",
