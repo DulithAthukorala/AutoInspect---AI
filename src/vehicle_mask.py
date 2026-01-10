@@ -1,35 +1,53 @@
-from ultralytics import YOLO
 import numpy as np
+from ultralytics import YOLO
+from typing import Optional
 
-VEHICLE_NAMES = {"car", "truck", "bus", "motorcycle"}  # adjust as you want
 
 class VehicleMasker:
-    def __init__(self, model_path: str = "yolov8n-seg.pt"):
+    """
+    Vehicle segmentation wrapper.
+    Responsibility:
+    - detect vehicle
+    - return binary mask (H x W)
+    - return None if vehicle not confidently detected
+    """
+
+    # COCO vehicle class IDs
+    VEHICLE_CLASS_IDS = {
+        2,   # car
+        3,   # motorcycle
+        5,   # bus
+        7,   # truck
+    }
+
+    def __init__(self, model_path: str):
         self.model = YOLO(model_path)
 
-    def predict_vehicle_mask(self, image, conf: float = 0.25) -> np.ndarray | None:
+    def predict_vehicle_mask(self, image) -> Optional[np.ndarray]:
         """
-        Returns a boolean mask (H,W) for the main vehicle, or None if not found.
+        Returns:
+        - binary vehicle mask (uint8 {0,1})
+        - None if no reliable vehicle found
         """
-        res = self.model(image, conf=conf)[0]
-        if res.masks is None:
+        results = self.model(image, conf=0.25, verbose=False)
+        r = results[0]
+
+        if r.masks is None or r.boxes is None:
             return None
 
-        masks = res.masks.data.cpu().numpy()            # (N,H,W) float
-        classes = res.boxes.cls.cpu().numpy().astype(int)
-        names = res.names
+        masks = r.masks.data.cpu().numpy()
+        classes = r.boxes.cls.cpu().numpy()
+        confidences = r.boxes.conf.cpu().numpy()
 
-        vehicle_idxs = []
-        for i, cls_id in enumerate(classes):
-            if names[int(cls_id)] in VEHICLE_NAMES:
-                vehicle_idxs.append(i)
+        vehicle_masks = []
 
-        if not vehicle_idxs:
+        for mask, cls_id, conf in zip(masks, classes, confidences):
+            if int(cls_id) in self.VEHICLE_CLASS_IDS and conf >= 0.35:
+                vehicle_masks.append(mask > 0.5)
+
+        if not vehicle_masks:
             return None
 
-        # union all vehicle masks
-        vehicle = np.zeros(masks[0].shape, dtype=bool)
-        for i in vehicle_idxs:
-            vehicle |= (masks[i] > 0.5)
-
-        return vehicle
+        # Union all vehicle masks
+        combined = np.logical_or.reduce(vehicle_masks)
+        return combined.astype(np.uint8)
