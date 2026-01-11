@@ -1,6 +1,7 @@
 import io
 import os
 import uuid
+import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from PIL import Image
 
+from src.quality import assess_image_quality
 from src.inference import DamageDetector
 from src.vehicle_mask import VehicleMasker
 from src.evidence import extract_evidence
@@ -18,9 +20,7 @@ from src.logic import (
     filter_meaningful_damages,
     confidence_breakdown,
 )
-
 from src.explain import generate_explanation
-
 from src.db import init_db, insert_case, get_case
 from src.storage import save_uploaded_image
 
@@ -32,8 +32,11 @@ DEFAULT_WEIGHTS = "runs/segment/train/weights/best.pt"
 WEIGHTS_PATH = os.getenv("WEIGHTS_PATH", DEFAULT_WEIGHTS)
 VEHICLE_WEIGHTS = os.getenv("VEHICLE_WEIGHTS", "yolov8n-seg.pt")
 
-# Phase-1 (simple versioning; later we’ll move to YAML)
 THRESHOLDS_VERSION = os.getenv("THRESHOLDS_VERSION", "v1")
+SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "+94-XX-XXXXXXX")
+
+# Prevent random OOM/500 on large images
+MAX_INFER_SIDE = int(os.getenv("MAX_INFER_SIDE", "1280"))
 
 
 # ----------------------------
@@ -42,7 +45,7 @@ THRESHOLDS_VERSION = os.getenv("THRESHOLDS_VERSION", "v1")
 class DamageOut(BaseModel):
     damage_type: str
     confidence: float
-    area_ratio: float  # vs vehicle
+    area_ratio: float
 
 
 class ConfidenceBreakdownOut(BaseModel):
@@ -56,19 +59,26 @@ class DecisionOut(BaseModel):
     severity: Optional[str]
     route: str
     confidence_score: float
-
-    # Pricing must be None unless AUTO
     estimated_cost_lkr: Optional[int] = None
     cost_range_lkr: Optional[Tuple[int, int]] = None
-
     pricing_mode: str
     flags: Optional[List[str]] = None
     reasons: List[str]
 
 
+class QualityOut(BaseModel):
+    ok: bool
+    score: float
+    flags: List[str]
+    metrics: Dict[str, float]
+    user_message: str
+
+
 class AssessResponse(BaseModel):
     case_id: str
     image_id: str
+    quality: QualityOut
+
     vehicle_area_ratio: Optional[float]
     damages: List[DamageOut]
     confidence_breakdown: ConfidenceBreakdownOut
@@ -77,7 +87,7 @@ class AssessResponse(BaseModel):
 
 
 # ----------------------------
-# Model singletons (loaded once)
+# Model singletons
 # ----------------------------
 _detector: Optional[DamageDetector] = None
 _vehicle_masker: Optional[VehicleMasker] = None
@@ -93,30 +103,25 @@ def get_models() -> tuple[DamageDetector, VehicleMasker]:
 
 
 # ----------------------------
-# FastAPI app
+# Helpers
 # ----------------------------
-app = FastAPI(title="AutoInspect AI API", version="1.0.0")
-
-
-@app.on_event("startup")
-def _startup():
-    init_db()
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+def _resize_for_inference(img: Image.Image, max_side: int) -> Image.Image:
+    w, h = img.size
+    m = max(w, h)
+    if m <= max_side:
+        return img
+    scale = max_side / float(m)
+    return img.resize((int(w * scale), int(h * scale)))
 
 
 def _overlaps_to_jsonable(overlaps: Optional[Dict[Tuple[int, int], float]]) -> Optional[Dict[str, float]]:
     if not overlaps:
         return None
-    # tuple keys -> "i-j"
     return {f"{i}-{j}": float(v) for (i, j), v in overlaps.items()}
 
 
 def to_jsonable_decision(d: Decision) -> Dict[str, Any]:
-    # Enforce Phase-1 guarantee: no pricing unless AUTO
+    # Phase-1: no pricing unless AUTO
     if d.route != "AUTO":
         est = None
         rng = None
@@ -152,33 +157,125 @@ def to_jsonable_evidence(e: CaseEvidence) -> Dict[str, Any]:
     }
 
 
-def run_pipeline(img: Image.Image, image_id: str) -> Dict[str, Any]:
+def _quality_to_jsonable(q) -> Dict[str, Any]:
+    return {
+        "ok": bool(q.ok),
+        "score": float(q.score),
+        "flags": list(q.flags),
+        "metrics": dict(q.metrics),
+        "user_message": str(q.user_message),
+    }
+
+
+def _empty_conf_breakdown() -> Dict[str, float]:
+    return {"detection": 0.0, "coverage": 0.0, "consistency": 1.0, "aggregate": 0.0}
+
+
+def _manual_payload(image_id: str, quality_json: Dict[str, Any], reason: str, flags: Optional[List[str]] = None) -> Dict[str, Any]:
+    flags = flags or []
+    decision = Decision(
+        severity=None,
+        route="MANUAL_REVIEW",
+        confidence_score=0.0,
+        estimated_cost_lkr=None,
+        cost_range_lkr=None,
+        pricing_mode="PENDING_REVIEW",
+        reasons=[
+            reason,
+            "Please upload a clear full-car photo (front/side), good lighting, not blurry.",
+            f"If it keeps happening, contact support: {SUPPORT_CONTACT}.",
+        ],
+        flags=flags,
+    )
+    return {
+        "quality": quality_json,
+        "image_id": image_id,
+        "vehicle_area_ratio": None,
+        "damages": [],
+        "overlaps": None,
+        "confidence_breakdown": _empty_conf_breakdown(),
+        "decision": to_jsonable_decision(decision),
+        "explanation": reason,
+        "meta": {
+            "weights_path": WEIGHTS_PATH,
+            "vehicle_weights": VEHICLE_WEIGHTS,
+            "thresholds_version": THRESHOLDS_VERSION,
+            "max_infer_side": MAX_INFER_SIDE,
+        },
+    }
+
+
+def _unwrap_yolo_result(x):
+    """
+    Make detector output consistent.
+    - If predict returns list/tuple of Results, take [0]
+    - Otherwise return as-is
+    """
+    if x is None:
+        return None
+    if isinstance(x, (list, tuple)) and len(x) > 0:
+        # common: [Results]
+        if hasattr(x[0], "masks") or hasattr(x[0], "boxes"):
+            return x[0]
+    return x
+
+
+def _unwrap_vehicle_mask(x):
+    """
+    Make vehicle masker output consistent.
+    - If it returns (mask, something), take mask
+    """
+    if x is None:
+        return None
+    if isinstance(x, (list, tuple)) and len(x) > 0:
+        return x[0]
+    return x
+
+
+def run_pipeline(img: Image.Image, image_id: str, quality_json: Dict[str, Any]) -> Dict[str, Any]:
     detector, vehicle_masker = get_models()
 
-    # 1) Vehicle mask
-    vehicle_mask = vehicle_masker.predict_vehicle_mask(img)
+    # 1) Vehicle mask (may be None)
+    vehicle_mask = _unwrap_vehicle_mask(vehicle_masker.predict_vehicle_mask(img))
 
-    # 2) Damage prediction
-    yolo_res = detector.predict(img)
+    # 2) Damage prediction (ensure single Results object)
+    yolo_raw = detector.predict(img)
+    yolo_res = _unwrap_yolo_result(yolo_raw)
 
-    # 3) Evidence
+    if yolo_res is None:
+        # don’t crash
+        return _manual_payload(
+            image_id=image_id,
+            quality_json=quality_json,
+            reason="Model returned no result for this image (prediction output was None).",
+            flags=["PIPELINE_NO_YOLO_RESULT"],
+        )
+
+    # 3) Evidence (must not crash)
     evidence = extract_evidence(yolo_res, image_id=image_id, vehicle_mask=vehicle_mask)
 
-    # ---- Confidence decomposition (same inputs as logic) ----
-    meaningful, _ = filter_meaningful_damages(evidence.damages)
-    _, conf_parts = confidence_breakdown(
+    # 4) Confidence decomposition (defensive)
+    fm = filter_meaningful_damages(evidence.damages)
+    if fm is None or not isinstance(fm, tuple) or len(fm) < 2:
+        meaningful = []
+    else:
+        meaningful = fm[0]
+
+    cb = confidence_breakdown(
         meaningful=meaningful,
         vehicle_area_ratio=evidence.vehicle_area_ratio,
         overlaps=evidence.overlaps,
     )
+    conf_parts = _empty_conf_breakdown()
+    if isinstance(cb, tuple) and len(cb) == 2 and isinstance(cb[1], dict):
+        conf_parts = cb[1]
 
-    # 4) Decision
+    # 5) Decision + explanation
     decision = decide_case(evidence)
-
-    # 5) Explanation
     explanation = generate_explanation(evidence, decision)
 
     return {
+        "quality": quality_json,
         **to_jsonable_evidence(evidence),
         "confidence_breakdown": conf_parts,
         "decision": to_jsonable_decision(decision),
@@ -187,8 +284,25 @@ def run_pipeline(img: Image.Image, image_id: str) -> Dict[str, Any]:
             "weights_path": WEIGHTS_PATH,
             "vehicle_weights": VEHICLE_WEIGHTS,
             "thresholds_version": THRESHOLDS_VERSION,
-        }
+            "max_infer_side": MAX_INFER_SIDE,
+        },
     }
+
+
+# ----------------------------
+# App
+# ----------------------------
+app = FastAPI(title="AutoInspect AI API", version="1.0.0")
+
+
+@app.on_event("startup")
+def _startup():
+    init_db()
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.post("/assess", response_model=AssessResponse)
@@ -202,11 +316,51 @@ async def assess_image(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read image file.")
 
+    # Resize for stability BEFORE any heavy work
+    img = _resize_for_inference(img, max_side=MAX_INFER_SIDE)
+
     image_id = file.filename or "upload"
     case_id = str(uuid.uuid4())
 
-    # Run pipeline
-    payload = run_pipeline(img, image_id=image_id)
+    # Quality check
+    q = assess_image_quality(img)
+    q_json = _quality_to_jsonable(q)
+
+    # If low quality -> return 200 MANUAL_REVIEW payload (no Streamlit "Request failed")
+    if not q.ok:
+        payload = _manual_payload(
+            image_id=image_id,
+            quality_json=q_json,
+            reason="Image quality is insufficient for reliable automatic assessment.",
+            flags=["LOW_QUALITY_IMAGE"] + list(q_json.get("flags", [])),
+        )
+
+        image_path, image_hash = save_uploaded_image(case_id, img, raw)
+        insert_case(
+            case_id=case_id,
+            image_path=image_path,
+            image_sha256=image_hash,
+            weights_path=WEIGHTS_PATH,
+            vehicle_weights=VEHICLE_WEIGHTS,
+            thresholds_version=THRESHOLDS_VERSION,
+            response_json={**payload, "case_id": case_id},
+        )
+        return JSONResponse({**payload, "case_id": case_id})
+
+    # Run pipeline (guard crashes so UI gets a REAL reason)
+    try:
+        payload = run_pipeline(img, image_id=image_id, quality_json=q_json)
+    except Exception as e:
+        tb = traceback.format_exc()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "PIPELINE_CRASH",
+                "message": str(e),
+                "traceback": tb,
+                "hint": "Open terminal where uvicorn runs and check traceback. Common: model output mismatch / None returns / OOM.",
+            },
+        )
 
     # Save image + DB record
     image_path, image_hash = save_uploaded_image(case_id, img, raw)
@@ -220,9 +374,7 @@ async def assess_image(file: UploadFile = File(...)):
         response_json={**payload, "case_id": case_id},
     )
 
-    # Return response
-    out = {**payload, "case_id": case_id}
-    return JSONResponse(out)
+    return JSONResponse({**payload, "case_id": case_id})
 
 
 @app.get("/case/{case_id}")
@@ -239,7 +391,6 @@ def download_report(case_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Case not found.")
 
-    # Downloadable JSON
     content = row.response_json
     filename = f"autoinspect_report_{case_id}.json"
     return Response(
@@ -247,36 +398,3 @@ def download_report(case_id: str):
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-@app.post("/replay/{case_id}")
-def replay_case(case_id: str):
-    """
-    Re-runs the full pipeline on the stored image to verify reproducibility.
-    (True reproducibility requires pinned model + thresholds versions.)
-    """
-    row = get_case(case_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
-
-    try:
-        img = Image.open(row.image_path).convert("RGB")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Stored image could not be loaded for replay.")
-
-    # Re-run
-    image_id = row.response_json.get("image_id", "replay")
-    payload = run_pipeline(img, image_id=image_id)
-
-    # Return replay output (do not overwrite DB in Phase-1)
-    return JSONResponse({
-        "case_id": case_id,
-        "replay": payload,
-        "original_meta": {
-            "weights_path": row.weights_path,
-            "vehicle_weights": row.vehicle_weights,
-            "thresholds_version": row.thresholds_version,
-            "image_sha256": row.image_sha256,
-            "created_at": row.created_at,
-        }
-    })
