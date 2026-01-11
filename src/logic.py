@@ -13,7 +13,9 @@ class DamageInstance:
     """
     One detected instance.
 
-    area_ratio: damage_pixels / vehicle_pixels   (IMPORTANT)
+    area_ratio:
+      - preferred: damage_pixels / vehicle_pixels
+      - fallback (if vehicle mask missing): damage_pixels / image_pixels
     confidence: YOLO conf in [0,1]
     """
     damage_type: str
@@ -27,7 +29,8 @@ class CaseEvidence:
     Evidence from a single image.
 
     overlaps: optional dict of (i,j)->overlap_ratio among masks (0..1)
-    vehicle_area_ratio: vehicle_pixels / image_pixels  (framing signal)
+    vehicle_area_ratio: vehicle_pixels / image_pixels (framing + vehicle visibility)
+      - None means vehicle mask missing/unknown
     """
     image_id: str
     damages: List[DamageInstance]
@@ -65,7 +68,7 @@ class Decision:
 
 # --- Noise suppression ---
 MIN_CONF_KEEP_DEFAULT = 0.35
-MIN_AREA_KEEP = 0.0008  # 0.08% of vehicle area
+MIN_AREA_KEEP = 0.0008  # 0.08% of vehicle area (or image fallback)
 NO_DAMAGE_AREA_THRESHOLD = 0.0012  # 0.12% of vehicle area
 
 PER_CLASS_MIN_CONF_KEEP = {
@@ -80,7 +83,6 @@ PER_CLASS_MIN_AREA_KEEP = {
 }
 
 # --- Severity score thresholds ---
-# score = sum(area_ratio * type_weight)
 SEVERITY_THRESHOLDS = {
     "LOW": 0.010,
     "MEDIUM": 0.030,  # > MEDIUM -> HIGH
@@ -147,11 +149,6 @@ def _normalize(d: DamageInstance) -> DamageInstance:
 # ============================================================
 
 def filter_meaningful_damages(damages: List[DamageInstance]) -> Tuple[List[DamageInstance], List[str]]:
-    """
-    Drop low-confidence / tiny-area detections deterministically.
-    Critical types (glass/tire/lamp) are allowed with slightly lower area threshold,
-    but still must pass confidence gate.
-    """
     flags: List[str] = []
     kept: List[DamageInstance] = []
 
@@ -180,7 +177,6 @@ def filter_meaningful_damages(damages: List[DamageInstance]) -> Tuple[List[Damag
 
 
 def aggregate_confidence(damages: List[DamageInstance]) -> float:
-    """Area-weighted confidence (fallback to mean confidence if total area is 0)."""
     if not damages:
         return 0.0
     total_area = sum(d.area_ratio for d in damages)
@@ -190,12 +186,10 @@ def aggregate_confidence(damages: List[DamageInstance]) -> float:
 
 
 def weighted_damage_score(damages: List[DamageInstance]) -> float:
-    """score = Σ(area_ratio * type_weight)."""
     return sum(d.area_ratio * type_weight(d.damage_type) for d in damages)
 
 
 def summarize_by_type(damages: List[DamageInstance]) -> Dict[str, Dict[str, float]]:
-    """Returns per-type totals: {type: {"area": total_area, "max_conf": max_conf}}"""
     out: Dict[str, Dict[str, float]] = {}
     for d in damages:
         k = d.damage_type.lower()
@@ -207,10 +201,6 @@ def summarize_by_type(damages: List[DamageInstance]) -> Dict[str, Dict[str, floa
 
 
 def vehicle_visibility_ok(vehicle_area_ratio: Optional[float]) -> bool:
-    """
-    Determines whether we can safely claim NO_DAMAGE.
-    If we don't have vehicle_area_ratio, visibility is unknown => NOT OK.
-    """
     if vehicle_area_ratio is None:
         return False
     var = float(vehicle_area_ratio)
@@ -218,15 +208,13 @@ def vehicle_visibility_ok(vehicle_area_ratio: Optional[float]) -> bool:
 
 
 # ============================================================
-# Confidence Decomposition (NEW)
+# Confidence Decomposition
 # ============================================================
 
 def coverage_confidence(vehicle_area_ratio: Optional[float]) -> float:
     """
-    Coverage confidence based on how well the vehicle fills the frame.
-    - None => unknown => 0.0
-    - Outside [MIN, MAX] => 0.0 (also handled by routing)
-    - Inside => score peaks near TARGET and falls as you get too close/far.
+    Coverage confidence based on framing.
+    None => unknown => 0.0 (conservative)
     """
     if vehicle_area_ratio is None:
         return 0.0
@@ -235,7 +223,6 @@ def coverage_confidence(vehicle_area_ratio: Optional[float]) -> float:
     if var < MIN_VEHICLE_AREA_RATIO or var > MAX_VEHICLE_AREA_RATIO:
         return 0.0
 
-    # Target framing (tunable). 0.35 means car reasonably visible, not too close.
     TARGET = 0.35
     dist = abs(var - TARGET)
     cov = 1.0 - (dist / TARGET)
@@ -243,11 +230,6 @@ def coverage_confidence(vehicle_area_ratio: Optional[float]) -> float:
 
 
 def consistency_confidence(overlaps: Optional[Dict[Tuple[int, int], float]]) -> float:
-    """
-    Consistency confidence from mask overlap (IoU).
-    - No overlaps => 1.0 (no contradiction signal)
-    - High overlap => lower confidence
-    """
     if not overlaps:
         return 1.0
     max_iou = max(float(v) for v in overlaps.values())
@@ -259,13 +241,6 @@ def confidence_breakdown(
     vehicle_area_ratio: Optional[float],
     overlaps: Optional[Dict[Tuple[int, int], float]],
 ) -> Tuple[float, Dict[str, float]]:
-    """
-    Returns (aggregate_conf, breakdown_dict)
-    aggregate = detection * coverage * consistency
-
-    Conservative by design:
-      - If coverage is unknown => aggregate drops => routes to manual.
-    """
     det = aggregate_confidence(meaningful)
     cov = coverage_confidence(vehicle_area_ratio)
     con = consistency_confidence(overlaps)
@@ -319,10 +294,6 @@ COSMETIC_RANGE_LKR = {
 
 
 def cosmetic_cost_range(severity: str, score: float) -> Tuple[int, int, int, List[str]]:
-    """
-    Returns (low, high, point, reasons) based on severity + score.
-    Point is a deterministic interpolation within range.
-    """
     reasons: List[str] = []
     lo, hi = COSMETIC_RANGE_LKR[severity]
 
@@ -341,10 +312,6 @@ def cosmetic_cost_range(severity: str, score: float) -> Tuple[int, int, int, Lis
 
 
 def component_pricing(damages: List[DamageInstance]) -> Tuple[int, List[str], List[str]]:
-    """
-    Returns (component_cost, reasons, flags).
-    Component cost is additive (glass + tire + lamp).
-    """
     reasons: List[str] = []
     flags: List[str] = []
 
@@ -391,26 +358,24 @@ def should_route_manual(
     overlaps: Optional[Dict[Tuple[int, int], float]] = None,
     vehicle_area_ratio: Optional[float] = None,
 ) -> Tuple[bool, List[str], List[str]]:
-    """
-    Deterministic routing:
-      - low confidence => manual
-      - tiny area (but not "no damage") => manual
-      - high overlap => manual
-      - poor framing => manual
-    """
     reasons: List[str] = []
     flags: List[str] = []
 
-    if vehicle_area_ratio is not None:
-        var = float(vehicle_area_ratio)
-        if var < MIN_VEHICLE_AREA_RATIO:
-            reasons.append(f"Vehicle coverage too small (vehicle_area_ratio={var:.2f}) => MANUAL_REVIEW.")
-            flags.append("FRAMING_TOO_FAR_OR_NOT_VEHICLE")
-            return True, reasons, flags
-        if var > MAX_VEHICLE_AREA_RATIO:
-            reasons.append(f"Vehicle coverage too large (vehicle_area_ratio={var:.2f}) => MANUAL_REVIEW.")
-            flags.append("FRAMING_TOO_CLOSE")
-            return True, reasons, flags
+    # If vehicle mask missing => we cannot trust vehicle-relative area logic
+    if vehicle_area_ratio is None:
+        reasons.append("Vehicle mask not available => cannot trust vehicle-relative damage area => MANUAL_REVIEW.")
+        flags.append("VEHICLE_MASK_MISSING")
+        return True, reasons, flags
+
+    var = float(vehicle_area_ratio)
+    if var < MIN_VEHICLE_AREA_RATIO:
+        reasons.append(f"Vehicle coverage too small (vehicle_area_ratio={var:.2f}) => MANUAL_REVIEW.")
+        flags.append("FRAMING_TOO_FAR_OR_NOT_VEHICLE")
+        return True, reasons, flags
+    if var > MAX_VEHICLE_AREA_RATIO:
+        reasons.append(f"Vehicle coverage too large (vehicle_area_ratio={var:.2f}) => MANUAL_REVIEW.")
+        flags.append("FRAMING_TOO_CLOSE")
+        return True, reasons, flags
 
     if float(conf_score) < MIN_CONF_FOR_AUTO:
         reasons.append(f"Aggregate confidence {conf_score:.2f} < {MIN_CONF_FOR_AUTO:.2f} => MANUAL_REVIEW.")
@@ -460,31 +425,12 @@ def decide_case(evidence: CaseEvidence) -> Decision:
         f"=> aggregate={conf_parts['aggregate']:.2f}."
     )
 
-    # Vehicle validity / framing guard:
-    # If vehicle is not clearly detected, do not make claims (including NO_DAMAGE).
-    if evidence.vehicle_area_ratio is not None and evidence.vehicle_area_ratio < MIN_VEHICLE_AREA_RATIO:
-        return Decision(
-            severity=None,
-            route="MANUAL_REVIEW",
-            confidence_score=float(conf_score),
-            estimated_cost_lkr=None,
-            cost_range_lkr=None,
-            pricing_mode="PENDING_REVIEW",
-            reasons=[
-                "Vehicle not clearly detected in the photo.",
-                f"vehicle_area_ratio={evidence.vehicle_area_ratio:.2f} is too low.",
-                "Please upload a clear full-car photo.",
-            ],
-            flags=flags + ["NOT_A_VALID_VEHICLE_VIEW"],
-        )
-
-    # -------- NO DAMAGE SHORT-CIRCUIT (SAFE) --------
+    # -------- NO DAMAGE SHORT-CIRCUIT (ONLY when vehicle visibility is OK) --------
     total_area = sum(d.area_ratio for d in meaningful)
     has_critical = any(is_glass(d.damage_type) or is_tire(d.damage_type) or is_lamp(d.damage_type) for d in meaningful)
 
     vehicle_ok = vehicle_visibility_ok(evidence.vehicle_area_ratio)
 
-    # If vehicle visibility is OK and damage is below noise threshold, we can assert NO_DAMAGE.
     if vehicle_ok and total_area < NO_DAMAGE_AREA_THRESHOLD and not has_critical:
         return Decision(
             severity="NO_DAMAGE",
@@ -517,7 +463,7 @@ def decide_case(evidence: CaseEvidence) -> Decision:
             flags=flags + ["VISIBILITY_INSUFFICIENT_FOR_NO_DAMAGE"],
         )
 
-    # 2) Severity
+    # 2) Severity (only meaningful)
     severity, score, sev_reasons = assign_severity(meaningful)
     reasons.extend(sev_reasons)
 
@@ -544,7 +490,6 @@ def decide_case(evidence: CaseEvidence) -> Decision:
     flags.extend(route_flags)
 
     if manual:
-        # PHASE-1 RULE: If manual, do NOT return ANY pricing numbers.
         return Decision(
             severity=severity,
             route="MANUAL_REVIEW",
@@ -556,7 +501,6 @@ def decide_case(evidence: CaseEvidence) -> Decision:
             flags=flags,
         )
 
-    # AUTO: pricing is allowed (point + range for transparency)
     return Decision(
         severity=severity,
         route="AUTO",
