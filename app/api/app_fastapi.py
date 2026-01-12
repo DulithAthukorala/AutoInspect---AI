@@ -33,7 +33,7 @@ WEIGHTS_PATH = os.getenv("WEIGHTS_PATH", DEFAULT_WEIGHTS)
 VEHICLE_WEIGHTS = os.getenv("VEHICLE_WEIGHTS", "yolov8n-seg.pt")
 
 THRESHOLDS_VERSION = os.getenv("THRESHOLDS_VERSION", "v1")
-SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "+94-XX-XXXXXXX")
+SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "+94-77-817-1672")
 
 # Prevent random OOM/500 on large images
 MAX_INFER_SIDE = int(os.getenv("MAX_INFER_SIDE", "1280"))
