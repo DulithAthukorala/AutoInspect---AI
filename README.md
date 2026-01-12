@@ -1,18 +1,18 @@
 # AutoInspect AI 🚗
-Car damage detection + claim triage + pre-estimate from a single photo (Phase-1 demo).
+Car damage detection + claim triage + pre-estimate from a single photo (Phase-1).
 
-> **Disclaimer:** Estimates are heuristic + for demo purposes. If the system routes to **MANUAL_REVIEW**, it will not output pricing numbers.
+> **Disclaimer:** Estimates are heuristic + for demo purposes.
 
 ---
 
 ## What this project does
-Upload a vehicle photo → the system:
-1. checks basic photo quality (blur/brightness/resolution)
-2. segments the vehicle (vehicle mask)
-3. detects damage instances (YOLO segmentation)
+Upload a vehicle photo → AutoInspect AI:
+1. Checks basic photo quality (blur/brightness/resolution)
+2. Detects the vehicle (vehicle mask)
+3. Detects Damage instances (YOLO-V8n segmentation)
 4. computes vehicle-relative damage area ratios
 5. produces:
-   - severity (NO_DAMAGE / LOW / MEDIUM / HIGH)
+   - severity (NO DAMAGE / LOW DAMAGE / MEDIUM DAMAGE / HIGH DAMAGE)
    - routing decision (AUTO vs MANUAL_REVIEW)
    - confidence breakdown (detection × coverage × consistency)
    - explanation text
@@ -57,9 +57,9 @@ Upload a vehicle photo → the system:
 - Ultralytics YOLO
 - FastAPI + Uvicorn
 - Streamlit
-- SQLite (Phase-1)
+- SQLite
 - NumPy + Pillow
-
+- Docker
 ---
 
 ## Project structure
