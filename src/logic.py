@@ -11,12 +11,12 @@ from typing import Dict, List, Optional, Tuple
 @dataclass(frozen=True)
 class DamageInstance:
     """
-    One detected instance.
-
+    One detected Damage.
+    Confidence: YOLO conf in [0,1]
     area_ratio:
       - preferred: damage_pixels / vehicle_pixels
       - fallback (if vehicle mask missing): damage_pixels / image_pixels
-    confidence: YOLO conf in [0,1]
+    
     """
     damage_type: str
     confidence: float
@@ -26,11 +26,11 @@ class DamageInstance:
 @dataclass(frozen=True)
 class CaseEvidence:
     """
-    Evidence from a single image.
-
-    overlaps: optional dict of (i,j)->overlap_ratio among masks (0..1)
-    vehicle_area_ratio: vehicle_pixels / image_pixels (framing + vehicle visibility)
-      - None means vehicle mask missing/unknown
+    Evidence of a single image.
+        - image id
+        - list of Damages detected
+        - overlaps between damages
+        - vehicle area ratio 
     """
     image_id: str
     damages: List[DamageInstance]
@@ -41,11 +41,9 @@ class CaseEvidence:
 @dataclass(frozen=True)
 class Decision:
     """
-    Decision support output.
-
-    Pricing rules (PHASE-1):
-      - If route != "AUTO", pricing MUST be None (no fake certainty).
-      - If severity == "NO_DAMAGE", pricing is 0.
+    Pricing rules:
+      - If route is "MANUAL_REVIEW", estimated cost is 0
+      - If severity is "NO_DAMAGE", estimated cost is 0
     pricing_mode:
       - "NONE" (no damage)
       - "AUTO_POINT" (auto-approved with point estimate)
@@ -62,79 +60,96 @@ class Decision:
     flags: List[str]
 
 
+
+
 # ============================================================
-# Configuration: thresholds (tuneable, deterministic)
+# Thresholds (tuneable)
 # ============================================================
 
-# --- Noise suppression ---
-MIN_CONF_KEEP_DEFAULT = 0.35
-MIN_AREA_KEEP = 0.0008  # 0.08% of vehicle area (or image fallback)
-NO_DAMAGE_AREA_THRESHOLD = 0.0012  # 0.12% of vehicle area
+# min total damage area ratio to consider "no damage"
+NO_DAMAGE_AREA_THRESHOLD = 0.0012 
 
+# min confidence to keep a damage
 PER_CLASS_MIN_CONF_KEEP = {
-    "lamp broken": 0.55,
     "scratch": 0.40,
     "dent": 0.40,
+    "crack": 0.45,
+    "glass shatter": 0.50,
+    "lamp broken": 0.55,
+    "tire flat": 0.50,   
 }
 
-PER_CLASS_MIN_AREA_KEEP = {
-    "scratch": 0.0010,
-    "dent": 0.0010,
+# min area ratio to keep a damage
+PER_CLASS_MIN_AREA_KEEP = {  
+    "scratch": 0.0005,
+    "dent": 0.0005,
+    "crack": 0.0005,
+    "glass shatter": 0.0020,
+    "lamp broken": 0.00015,
+    "tire flat": 0.0020,
 }
 
-# --- Severity score thresholds ---
+# Severity score thresholds
 SEVERITY_THRESHOLDS = {
     "LOW": 0.010,
     "MEDIUM": 0.030,  # > MEDIUM -> HIGH
 }
 
-# --- Routing thresholds ---
+# Routing thresholds
 MIN_CONF_FOR_AUTO = 0.55
 MIN_TOTAL_AREA_FOR_TRUST = 0.0020
 MAX_OVERLAP_FOR_TRUST = 0.60
 
 # Vehicle framing thresholds (vehicle / image)
 MIN_VEHICLE_AREA_RATIO = 0.08
-MAX_VEHICLE_AREA_RATIO = 0.90
+MAX_VEHICLE_AREA_RATIO = 1.00
 
-
-# ============================================================
-# Damage taxonomy + weights
-# ============================================================
-
+# damage type weights for scoring
 DAMAGE_TYPE_WEIGHT = {
     "scratch": 1.0,
     "dent": 1.5,
     "crack": 2.0,
-    "glass": 2.5,
-    "glass_shatter": 3.0,
+    "glass shatter": 3.0,
     "lamp broken": 2.2,
     "tire flat": 3.0,
 }
 
 
+
+
+# ============================================================
+# Damage Identification & Normalization Helpers
+# ============================================================
+
 def type_weight(damage_type: str) -> float:
     return DAMAGE_TYPE_WEIGHT.get(str(damage_type).lower(), 1.2)
 
+def is_scratch(damage_type: str) -> bool:
+    t = str(damage_type).lower()
+    return ("scratch" in t)
+
+def is_dent(damage_type: str) -> bool:
+    t = str(damage_type).lower()
+    return ("dent" in t)
+
+def is_crack(damage_type: str) -> bool:
+    t = str(damage_type).lower()
+    return ("crack" in t)
 
 def is_glass(damage_type: str) -> bool:
     t = str(damage_type).lower()
-    return ("glass" in t) or ("windshield" in t) or ("window" in t)
-
-
-def is_tire(damage_type: str) -> bool:
-    t = str(damage_type).lower()
-    return ("tire" in t) or ("tyre" in t)
-
+    return ("glass shatter" in t)
 
 def is_lamp(damage_type: str) -> bool:
     t = str(damage_type).lower()
-    return ("lamp" in t) or ("headlight" in t) or ("tail light" in t)
+    return ("lamp broken" in t)
 
+def is_tire(damage_type: str) -> bool:
+    t = str(damage_type).lower()
+    return ("tire flat" in t)
 
-def _clamp(x: float, lo: float, hi: float) -> float:
+def _clamp(x: float, lo: float, hi: float) -> float: # keeps x within [lo, hi] [0 and 1]
     return max(lo, min(hi, float(x)))
-
 
 def _normalize(d: DamageInstance) -> DamageInstance:
     return DamageInstance(
@@ -142,6 +157,7 @@ def _normalize(d: DamageInstance) -> DamageInstance:
         confidence=_clamp(d.confidence, 0.0, 1.0),
         area_ratio=_clamp(d.area_ratio, 0.0, 1.0),
     )
+
 
 
 # ============================================================
@@ -155,14 +171,14 @@ def filter_meaningful_damages(damages: List[DamageInstance]) -> Tuple[List[Damag
     for d0 in damages:
         d = _normalize(d0)
         name = d.damage_type.lower()
-
-        min_conf = PER_CLASS_MIN_CONF_KEEP.get(name, MIN_CONF_KEEP_DEFAULT)
-        min_area = PER_CLASS_MIN_AREA_KEEP.get(name, MIN_AREA_KEEP)
-
-        # Critical components: allow smaller area but still require confidence
-        if is_glass(d.damage_type) or is_tire(d.damage_type) or is_lamp(d.damage_type):
-            min_area = min(min_area, 0.0005)
-
+    
+        if is_dent(name) or is_scratch(name) or is_crack(name) or is_glass(name) or is_lamp(name) or is_tire(name):
+            min_conf = PER_CLASS_MIN_CONF_KEEP.get(name, MIN_CONF_KEEP_DEFAULT)
+            min_area = PER_CLASS_MIN_AREA_KEEP.get(name, MIN_AREA_KEEP_DEFAULT)
+        else:
+            min_conf = 0.50  # generic min conf for unknown types
+            min_area = 0.0005  # generic min area for unknown types
+            
         if d.confidence < min_conf:
             continue
         if d.area_ratio < min_area:
@@ -179,17 +195,20 @@ def filter_meaningful_damages(damages: List[DamageInstance]) -> Tuple[List[Damag
 def aggregate_confidence(damages: List[DamageInstance]) -> float:
     if not damages:
         return 0.0
+
     total_area = sum(d.area_ratio for d in damages)
+
     if total_area <= 0:
         return sum(d.confidence for d in damages) / len(damages)
-    return sum(d.confidence * d.area_ratio for d in damages) / total_area
+    else:   
+        return sum(d.confidence * d.area_ratio for d in damages) / total_area
 
 
 def weighted_damage_score(damages: List[DamageInstance]) -> float:
     return sum(d.area_ratio * type_weight(d.damage_type) for d in damages)
 
 
-def summarize_by_type(damages: List[DamageInstance]) -> Dict[str, Dict[str, float]]:
+def summarize_by_type(damages: List[DamageInstance]):
     out: Dict[str, Dict[str, float]] = {}
     for d in damages:
         k = d.damage_type.lower()
@@ -206,7 +225,7 @@ def vehicle_visibility_ok(vehicle_area_ratio: Optional[float]) -> bool:
     var = float(vehicle_area_ratio)
     return (MIN_VEHICLE_AREA_RATIO <= var <= MAX_VEHICLE_AREA_RATIO)
 
-
+'''
 # ============================================================
 # Confidence Decomposition
 # ============================================================
@@ -236,24 +255,20 @@ def consistency_confidence(overlaps: Optional[Dict[Tuple[int, int], float]]) -> 
     return _clamp(1.0 - max_iou, 0.0, 1.0)
 
 
-def confidence_breakdown(
-    meaningful: List[DamageInstance],
-    vehicle_area_ratio: Optional[float],
-    overlaps: Optional[Dict[Tuple[int, int], float]],
-) -> Tuple[float, Dict[str, float]]:
-    det = aggregate_confidence(meaningful)
-    cov = coverage_confidence(vehicle_area_ratio)
-    con = consistency_confidence(overlaps)
-    agg = _clamp(det * cov * con, 0.0, 1.0)
+def confidence_breakdown(meaningful: List[DamageInstance],vehicle_area_ratio: Optional[float],overlaps: Optional[Dict[Tuple[int, int], float]]) -> Tuple:
+    detection = aggregate_confidence(meaningful)
+    coverage = coverage_confidence(vehicle_area_ratio)
+    consistency = consistency_confidence(overlaps)
+    aggregate = _clamp(detection * coverage * consistency, 0.0, 1.0)
 
-    return agg, {
-        "detection": float(det),
-        "coverage": float(cov),
-        "consistency": float(con),
-        "aggregate": float(agg),
+    return aggregate, {
+        "detection": float(detection),
+        "coverage": float(coverage),
+        "consistency": float(consistency),
+        "aggregate": float(aggregate)
     }
 
-
+'''
 # ============================================================
 # Severity
 # ============================================================
@@ -261,7 +276,7 @@ def confidence_breakdown(
 def assign_severity(damages: List[DamageInstance]) -> Tuple[str, float, List[str]]:
     reasons: List[str] = []
     score = weighted_damage_score(damages)
-    reasons.append(f"Weighted damage score = {score:.4f} (sum(area_ratio * type_weight)).")
+    reasons.append(f"Weighted damage score = {score:.4f})
 
     if score <= SEVERITY_THRESHOLDS["LOW"]:
         reasons.append(f"Score <= {SEVERITY_THRESHOLDS['LOW']:.3f} => LOW severity.")
