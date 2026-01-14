@@ -6,17 +6,18 @@ from PIL import Image
 # =========================
 # CONFIG
 # =========================
-API_BATCH_URL = "http://localhost:8000/assess_batch"  # <-- your new batch endpoint
+API_BATCH_URL = os.getenv("API_BATCH_URL", "http://localhost:8000/assess_batch")
 TIMEOUT_SEC = 180
 MAX_FILES = 6
 
-INSTRUCTION_IMAGE_PATH = "hw_to_take.pngg"  # <-- change to your actual filename
+INSTRUCTION_IMAGE_PATH = "app/ui/hw_to_take.jpg"  # <-- change to your actual filename
 
 # =========================
 # PAGE
 # =========================
 st.set_page_config(page_title="Auto-Inspect AI", page_icon="🚗", layout="wide")
-st.title("🚗 Auto-Inspect AI — Multi Damage Costing")
+st.title("AUTO-INSPECT AI")
+st.subheader("Vehicle Damage Detection with AI")
 
 # =========================
 # INSTRUCTIONS (with image)
@@ -27,7 +28,7 @@ with c1:
     if os.path.exists(INSTRUCTION_IMAGE_PATH):
         try:
             img = Image.open(INSTRUCTION_IMAGE_PATH)
-            st.image(img, caption="How to take the photo", use_container_width=True)
+            st.image(img, caption="Take Your Damaged Photo Like this", use_container_width=True)
         except Exception:
             st.warning("Couldn't open the instruction image. Check the file is a valid image.")
     else:
@@ -36,22 +37,19 @@ with c1:
 with c2:
     st.markdown(
         """
-### 📸 Upload rules (follow this for best results)
-- **One photo = one damage** (scratch OR dent OR crack OR glass shatter OR lamp broken OR tire flat)
-- **Close-up of the damaged part**, not the whole car
+### 📸 Take Your Pictures like this to get the best Results
+- One photo should only include **one damaged part**
+- take close-up photos of the damage
+- don't take wide shots of the whole vehicle
+- Avoid including license plates or personal info
 - Good lighting, not blurry, no heavy shadows
 - If you have multiple damages → upload **multiple photos** (up to 6)
-
-### ✅ What you’ll get
-- Each photo will show: **AUTO / MANUAL / NO DAMAGE** + cost estimate
-- Bottom will show: **Total cost of the AUTO-approved ones** (manual ones excluded)
-        """
+"""
     )
-
 st.divider()
 
 # =========================
-# UPLOAD
+# UPLOAD Pictures
 # =========================
 files = st.file_uploader(
     f"Upload up to {MAX_FILES} damage photos",
@@ -61,7 +59,7 @@ files = st.file_uploader(
 
 if files:
     if len(files) > MAX_FILES:
-        st.error(f"Max {MAX_FILES} files allowed. You uploaded {len(files)}.")
+        st.error(f"Upto {MAX_FILES} files allowed. You uploaded {len(files)}. If you have more contact support.")
         st.stop()
 
     st.write(f"✅ Uploaded: **{len(files)}** image(s)")
@@ -87,7 +85,7 @@ if files:
             st.stop()
 
         # =========================
-        # AUTO-SUM (your rule)
+        # AUTO-SUM 
         # =========================
         auto_total_point = 0
         auto_total_lo = 0
