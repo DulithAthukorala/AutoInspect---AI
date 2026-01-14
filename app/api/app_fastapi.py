@@ -18,7 +18,6 @@ from src.logic import (
     CaseEvidence,
     Decision,
     filter_meaningful_damages,
-    confidence_breakdown,
 )
 from src.explain import generate_explanation
 from src.db import init_db, insert_case, get_case
@@ -48,13 +47,6 @@ class DamageOut(BaseModel):
     area_ratio: float
 
 
-class ConfidenceBreakdownOut(BaseModel):
-    detection: float
-    coverage: float
-    consistency: float
-    aggregate: float
-
-
 class DecisionOut(BaseModel):
     severity: Optional[str]
     route: str
@@ -81,9 +73,21 @@ class AssessResponse(BaseModel):
 
     vehicle_area_ratio: Optional[float]
     damages: List[DamageOut]
-    confidence_breakdown: ConfidenceBreakdownOut
     decision: DecisionOut
     explanation: str
+
+
+class BatchTotalOut(BaseModel):
+    pricing_mode: str  # AUTO_POINT / AUTO_RANGE / PENDING_REVIEW
+    estimated_total_lkr: Optional[int] = None
+    total_range_lkr: Optional[Tuple[int, int]] = None
+    reason: str
+
+
+class AssessBatchResponse(BaseModel):
+    batch_id: str
+    items: List[AssessResponse]
+    final_total: BatchTotalOut
 
 
 # ----------------------------
@@ -121,7 +125,7 @@ def _overlaps_to_jsonable(overlaps: Optional[Dict[Tuple[int, int], float]]) -> O
 
 
 def to_jsonable_decision(d: Decision) -> Dict[str, Any]:
-    # Phase-1: no pricing unless AUTO
+    # Don’t return pricing unless AUTO
     if d.route != "AUTO":
         est = None
         rng = None
@@ -167,10 +171,6 @@ def _quality_to_jsonable(q) -> Dict[str, Any]:
     }
 
 
-def _empty_conf_breakdown() -> Dict[str, float]:
-    return {"detection": 0.0, "coverage": 0.0, "consistency": 1.0, "aggregate": 0.0}
-
-
 def _manual_payload(image_id: str, quality_json: Dict[str, Any], reason: str, flags: Optional[List[str]] = None) -> Dict[str, Any]:
     flags = flags or []
     decision = Decision(
@@ -193,7 +193,6 @@ def _manual_payload(image_id: str, quality_json: Dict[str, Any], reason: str, fl
         "vehicle_area_ratio": None,
         "damages": [],
         "overlaps": None,
-        "confidence_breakdown": _empty_conf_breakdown(),
         "decision": to_jsonable_decision(decision),
         "explanation": reason,
         "meta": {
@@ -206,30 +205,72 @@ def _manual_payload(image_id: str, quality_json: Dict[str, Any], reason: str, fl
 
 
 def _unwrap_yolo_result(x):
-    """
-    Make detector output consistent.
-    - If predict returns list/tuple of Results, take [0]
-    - Otherwise return as-is
-    """
+    """Ensure detector output is a single Results object."""
     if x is None:
         return None
     if isinstance(x, (list, tuple)) and len(x) > 0:
-        # common: [Results]
         if hasattr(x[0], "masks") or hasattr(x[0], "boxes"):
             return x[0]
     return x
 
 
 def _unwrap_vehicle_mask(x):
-    """
-    Make vehicle masker output consistent.
-    - If it returns (mask, something), take mask
-    """
+    """If vehicle masker returns (mask, something), take mask."""
     if x is None:
         return None
     if isinstance(x, (list, tuple)) and len(x) > 0:
         return x[0]
     return x
+
+
+def aggregate_decisions(decisions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    # If any manual -> total must be manual (professional rule)
+    for d in decisions:
+        if d.get("route") == "MANUAL_REVIEW" or d.get("pricing_mode") == "PENDING_REVIEW":
+            return {
+                "pricing_mode": "PENDING_REVIEW",
+                "estimated_total_lkr": None,
+                "total_range_lkr": None,
+                "reason": "At least one image needs manual review, so total cannot be auto-calculated.",
+            }
+
+    total_point = 0
+    total_lo = 0
+    total_hi = 0
+    any_range = False
+
+    for d in decisions:
+        pm = d.get("pricing_mode")
+
+        if pm == "AUTO_POINT" and d.get("estimated_cost_lkr") is not None:
+            val = int(d["estimated_cost_lkr"])
+            total_point += val
+            total_lo += val
+            total_hi += val
+
+        elif pm == "AUTO_RANGE" and d.get("cost_range_lkr"):
+            lo, hi = d["cost_range_lkr"]
+            total_lo += int(lo)
+            total_hi += int(hi)
+            any_range = True
+
+        elif pm == "NONE":
+            continue
+
+    if any_range:
+        return {
+            "pricing_mode": "AUTO_RANGE",
+            "estimated_total_lkr": None,
+            "total_range_lkr": (int(total_lo), int(total_hi)),
+            "reason": "Total is a range because at least one damage requires replacement.",
+        }
+
+    return {
+        "pricing_mode": "AUTO_POINT",
+        "estimated_total_lkr": int(total_point),
+        "total_range_lkr": None,
+        "reason": "Total is a point estimate because all damages are repair-based point estimates.",
+    }
 
 
 def run_pipeline(img: Image.Image, image_id: str, quality_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,12 +279,11 @@ def run_pipeline(img: Image.Image, image_id: str, quality_json: Dict[str, Any]) 
     # 1) Vehicle mask (may be None)
     vehicle_mask = _unwrap_vehicle_mask(vehicle_masker.predict_vehicle_mask(img))
 
-    # 2) Damage prediction (ensure single Results object)
+    # 2) Damage prediction
     yolo_raw = detector.predict(img)
     yolo_res = _unwrap_yolo_result(yolo_raw)
 
     if yolo_res is None:
-        # don’t crash
         return _manual_payload(
             image_id=image_id,
             quality_json=quality_json,
@@ -251,33 +291,16 @@ def run_pipeline(img: Image.Image, image_id: str, quality_json: Dict[str, Any]) 
             flags=["PIPELINE_NO_YOLO_RESULT"],
         )
 
-    # 3) Evidence (must not crash)
+    # 3) Evidence extraction
     evidence = extract_evidence(yolo_res, image_id=image_id, vehicle_mask=vehicle_mask)
 
-    # 4) Confidence decomposition (defensive)
-    fm = filter_meaningful_damages(evidence.damages)
-    if fm is None or not isinstance(fm, tuple) or len(fm) < 2:
-        meaningful = []
-    else:
-        meaningful = fm[0]
-
-    cb = confidence_breakdown(
-        meaningful=meaningful,
-        vehicle_area_ratio=evidence.vehicle_area_ratio,
-        overlaps=evidence.overlaps,
-    )
-    conf_parts = _empty_conf_breakdown()
-    if isinstance(cb, tuple) and len(cb) == 2 and isinstance(cb[1], dict):
-        conf_parts = cb[1]
-
-    # 5) Decision + explanation
+    # 4) Decision + explanation
     decision = decide_case(evidence)
     explanation = generate_explanation(evidence, decision)
 
     return {
         "quality": quality_json,
         **to_jsonable_evidence(evidence),
-        "confidence_breakdown": conf_parts,
         "decision": to_jsonable_decision(decision),
         "explanation": explanation,
         "meta": {
@@ -316,7 +339,7 @@ async def assess_image(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read image file.")
 
-    # Resize for stability BEFORE any heavy work
+    # Resize for stability
     img = _resize_for_inference(img, max_side=MAX_INFER_SIDE)
 
     image_id = file.filename or "upload"
@@ -326,7 +349,7 @@ async def assess_image(file: UploadFile = File(...)):
     q = assess_image_quality(img)
     q_json = _quality_to_jsonable(q)
 
-    # If low quality -> return 200 MANUAL_REVIEW payload (no Streamlit "Request failed")
+    # If low quality -> return 200 MANUAL_REVIEW payload (no client crash)
     if not q.ok:
         payload = _manual_payload(
             image_id=image_id,
@@ -347,7 +370,7 @@ async def assess_image(file: UploadFile = File(...)):
         )
         return JSONResponse({**payload, "case_id": case_id})
 
-    # Run pipeline (guard crashes so UI gets a REAL reason)
+    # Run pipeline (guard crashes so UI gets a real reason)
     try:
         payload = run_pipeline(img, image_id=image_id, quality_json=q_json)
     except Exception as e:
@@ -358,7 +381,7 @@ async def assess_image(file: UploadFile = File(...)):
                 "error": "PIPELINE_CRASH",
                 "message": str(e),
                 "traceback": tb,
-                "hint": "Open terminal where uvicorn runs and check traceback. Common: model output mismatch / None returns / OOM.",
+                "hint": "Common: model output mismatch / None returns / OOM.",
             },
         )
 
@@ -375,6 +398,83 @@ async def assess_image(file: UploadFile = File(...)):
     )
 
     return JSONResponse({**payload, "case_id": case_id})
+
+
+@app.post("/assess_batch", response_model=AssessBatchResponse)
+async def assess_batch(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Upload at least 1 image.")
+
+    batch_id = str(uuid.uuid4())
+    items: List[Dict[str, Any]] = []
+    decision_dicts: List[Dict[str, Any]] = []
+
+    for f in files:
+        if f.content_type not in {"image/jpeg", "image/png", "image/jpg"}:
+            # hard fail: client sent bad file
+            raise HTTPException(status_code=400, detail="All uploads must be JPG/PNG images.")
+
+        try:
+            raw = await f.read()
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Could not read image file: {f.filename}")
+
+        img = _resize_for_inference(img, max_side=MAX_INFER_SIDE)
+
+        image_id = f.filename or "upload"
+        case_id = str(uuid.uuid4())
+
+        # Quality check per image
+        q = assess_image_quality(img)
+        q_json = _quality_to_jsonable(q)
+
+        if not q.ok:
+            payload = _manual_payload(
+                image_id=image_id,
+                quality_json=q_json,
+                reason="Image quality is insufficient for reliable automatic assessment.",
+                flags=["LOW_QUALITY_IMAGE"] + list(q_json.get("flags", [])),
+            )
+        else:
+            try:
+                payload = run_pipeline(img, image_id=image_id, quality_json=q_json)
+            except Exception as e:
+                # convert crash into a manual payload (don’t break the whole batch)
+                payload = _manual_payload(
+                    image_id=image_id,
+                    quality_json=q_json,
+                    reason=f"Pipeline crash on this image: {str(e)}",
+                    flags=["PIPELINE_CRASH_ON_ITEM"],
+                )
+
+        # Save each case (keeps history + audit trail)
+        image_path, image_hash = save_uploaded_image(case_id, img, raw)
+        insert_case(
+            case_id=case_id,
+            image_path=image_path,
+            image_sha256=image_hash,
+            weights_path=WEIGHTS_PATH,
+            vehicle_weights=VEHICLE_WEIGHTS,
+            thresholds_version=THRESHOLDS_VERSION,
+            response_json={**payload, "case_id": case_id, "batch_id": batch_id},
+        )
+
+        item = {**payload, "case_id": case_id}
+        items.append(item)
+
+        # Collect decisions for aggregation
+        decision_dicts.append(item["decision"])
+
+    final_total = aggregate_decisions(decision_dicts)
+
+    return JSONResponse(
+        {
+            "batch_id": batch_id,
+            "items": items,
+            "final_total": final_total,
+        }
+    )
 
 
 @app.get("/case/{case_id}")
