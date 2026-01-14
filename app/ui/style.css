@@ -1,0 +1,138 @@
+/* styles.css - clean landing-page vibe */
+
+:root{
+  --bg: #0b1220;
+  --card: rgba(255,255,255,0.04);
+  --border: rgba(255,255,255,0.08);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.68);
+  --accent: #f05a28; /* orange CTA */
+}
+
+.block-container{
+  max-width: 1200px;
+  padding-top: 1.2rem;
+  padding-bottom: 3rem;
+}
+
+h1, h2, h3 { letter-spacing: -0.3px; }
+p, li { color: var(--muted); }
+
+.hero{
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(0,180,255,0.14), rgba(240,90,40,0.10));
+  padding: 42px 42px;
+  margin-bottom: 26px;
+}
+
+.hero-title{
+  font-size: 3rem;
+  font-weight: 900;
+  margin: 0;
+  color: var(--text);
+  line-height: 1.05;
+}
+
+.hero-sub{
+  margin-top: 12px;
+  font-size: 1.05rem;
+  color: var(--muted);
+  max-width: 720px;
+}
+
+.cta-row{
+  margin-top: 18px;
+  display:flex;
+  gap:12px;
+  align-items:center;
+  flex-wrap: wrap;
+}
+
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  padding: 10px 14px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.section{
+  padding: 22px 6px;
+}
+
+.section-title{
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text);
+  margin: 0 0 10px 0;
+}
+
+.card{
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  border-radius: 18px;
+  padding: 18px 18px;
+}
+
+.soft-divider{
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 24px 0;
+}
+
+.status{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.88rem;
+  border: 1px solid var(--border);
+}
+
+.status-auto{ background: rgba(0,180,255,0.12); color: var(--text); border-color: rgba(0,180,255,0.30); }
+.status-manual{ background: rgba(255,80,110,0.12); color: var(--text); border-color: rgba(255,80,110,0.30); }
+.status-none{ background: rgba(0,220,140,0.10); color: var(--text); border-color: rgba(0,220,140,0.28); }
+
+.price{
+  font-size: 1.4rem;
+  font-weight: 900;
+  color: var(--text);
+  margin: 8px 0 0 0;
+}
+
+.muted{ color: var(--muted); }
+
+.big-total{
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(0,220,140,0.10), rgba(0,180,255,0.08));
+  padding: 16px 16px;
+}
+
+.big-total h2{
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 900;
+}
+
+/* Style primary buttons to orange */
+.stButton > button[kind="primary"]{
+  background: var(--accent) !important;
+  border: 0 !important;
+  color: white !important;
+  border-radius: 999px !important;
+  padding: 0.65rem 1.1rem !important;
+  font-weight: 800 !important;
+}
+
+.stButton > button{
+  border-radius: 999px !important;
+}
