@@ -1,0 +1,60 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv311/
+env/
+
+# Big folders
+data/
+datasets/
+runs/
+artifacts/
+outputs/
+results/
+logs/
+
+# Weights / binaries
+models/
+*.pt
+*.onnx
+*.engine
+*.torchscript
+
+# Notebooks
+notebooks/
+tests/notebooks/
+
+# Media / big files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+yolo_data/
+venv311/
+node_modules/
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.jpg
+*.png
