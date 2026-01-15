@@ -6,7 +6,8 @@ from PIL import Image
 # =========================
 # CONFIG
 # =========================
-API_BATCH_URL = os.getenv("API_BATCH_URL", "http://localhost:8000/assess_batch")
+API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+API_BATCH_URL = os.getenv("API_BATCH_URL", f"{API_URL}/assess_batch")
 TIMEOUT_SEC = 180
 MAX_FILES = 6
 
