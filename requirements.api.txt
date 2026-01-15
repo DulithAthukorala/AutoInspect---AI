@@ -1,0 +1,14 @@
+ultralytics
+opencv-python-headless
+numpy
+pandas
+matplotlib
+pydantic
+fastapi
+uvicorn
+scikit-learn
+plotly
+albumentations
+requests
+huggingface_hub
+python-multipart
