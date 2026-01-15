@@ -1,0 +1,7 @@
+streamlit
+pydantic
+requests
+numpy
+pandas
+plotly
+opencv-python-headless
