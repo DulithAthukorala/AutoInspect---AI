@@ -27,8 +27,8 @@ from src.storage import save_uploaded_image
 # ----------------------------
 # Config
 # ----------------------------
-DEFAULT_WEIGHTS = "runs/segment/train/weights/best.pt"
-WEIGHTS_PATH = os.getenv("WEIGHTS_PATH", DEFAULT_WEIGHTS)
+DEFAULT_WEIGHTS = "/app/models/best.pt"
+WEIGHTS_PATH = os.getenv("MODEL_PATH") or os.getenv("WEIGHTS_PATH", DEFAULT_WEIGHTS)
 VEHICLE_WEIGHTS = os.getenv("VEHICLE_WEIGHTS", "yolov8n-seg.pt")
 
 THRESHOLDS_VERSION = os.getenv("THRESHOLDS_VERSION", "v1")
@@ -320,8 +320,8 @@ app = FastAPI(title="AutoInspect AI API", version="1.0.0")
 
 @app.on_event("startup")
 def _startup():
-    init_db()
 
+    init_db()
 
 @app.get("/health")
 def health():
