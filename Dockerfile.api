@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1) Install CPU-only PyTorch explicitly (fast + smaller, no CUDA)
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+      torch torchvision \
+      --index-url https://download.pytorch.org/whl/cpu
+
+# 2) Install the rest of your API deps (torch removed from this file)
+COPY requirements.api.txt .
+RUN pip install --no-cache-dir -r requirements.api.txt
+
+# 3) Copy code
+COPY . .
+
+# Optional: create a folder for weights
+RUN mkdir -p /app/models
+
+EXPOSE 8000
+CMD ["uvicorn", "app.api.app_fastapi:app", "--host", "0.0.0.0", "--port", "8000"]
