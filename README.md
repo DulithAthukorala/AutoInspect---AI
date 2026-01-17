@@ -328,47 +328,144 @@ autoinspect-ai/
 ```
 
 
-## 📡 API Documentation
+## 🔌 API Documentation
 
-### **Endpoints**
+The AutoInspect AI backend is powered by **FastAPI** and exposes endpoints for
+single-image assessment, batch processing, health checks, and report retrieval.
 
-#### **`POST /predict`**
-Analyze vehicle damage from uploaded image.
+---
+
+### 📍 POST `/assess`
+
+Analyze a **single vehicle damage image**.
+
+**Description**
+- Runs image quality checks
+- Performs YOLOv8 damage detection
+- Applies rule-based severity, confidence, and pricing logic
+- Returns structured explanation and decision
+
+**Request**
+```bash
+curl -X POST "http://localhost:8000/assess" \
+  -F "file=@path/to/damaged_car.jpg"
+
 
 **Request:**
 ```bash
-curl -X POST "http://localhost:8000/predict" \
+curl -X POST "http://localhost:8000/asses" \
+  -F "file=@path/to/damaged_car.jpg"
+---
+
+### 📍 POST `/assess`
+
+Analyze a **single vehicle damage image**.
+
+**Description**
+- Runs image quality checks
+- Performs YOLOv8 damage detection
+- Applies rule-based severity, confidence, and pricing logic
+- Returns structured explanation and decision
+
+**Request**
+```bash
+curl -X POST "http://localhost:8000/assess" \
   -F "file=@path/to/damaged_car.jpg"
 ```
 
 **Response:**
 ```json
 {
+  "case_id": "8f4c9c4d-3c5e-4c1a-9c62-7c6e0b9c1a42",
+  "image_id": "damaged_car.jpg",
+  "quality": {
+    "ok": true,
+    "score": 0.91,
+    "flags": [],
+    "metrics": {
+      "blur": 0.07,
+      "brightness": 0.54
+    },
+    "user_message": "Image quality is sufficient."
+  },
+  "vehicle_area_ratio": 0.82,
   "damages": [
     {
-      "type": "scratch",
+      "damage_type": "scratch",
       "confidence": 0.87,
-      "mask_area_px": 12430,
-      "area_ratio":  0.032,
-      "bounding_box": [120, 340, 280, 450]
+      "area_ratio": 0.032
     },
     {
-      "type": "dent",
+      "damage_type": "dent",
       "confidence": 0.92,
-      "mask_area_px": 8720,
-      "area_ratio":  0.022,
-      "bounding_box": [300, 200, 420, 310]
+      "area_ratio": 0.022
     }
   ],
-  "severity": "moderate",
-  "estimated_cost_usd": {
-    "min": 1200,
-    "max": 1800
+  "decision": {
+    "severity": "moderate",
+    "route": "AUTO",
+    "confidence_score": 0.89,
+    "estimated_cost_lkr": 42000,
+    "cost_range_lkr": null,
+    "pricing_mode": "AUTO_POINT",
+    "flags": null,
+    "reasons": [
+      "Detected moderate scratch and minor dent",
+      "Total affected area within repair threshold"
+    ]
   },
-  "overall_confidence": 0.89,
-  "routing_decision": "auto_approved",
-  "explanation": "Detected 2 damages:  moderate scratch (3.2% area, conf: 0.87) and minor dent (2.2% area, conf: 0.92). Combined area ratio of 5.4% suggests moderate severity.  High confidence (0.89) qualifies for automatic approval.",
-  "processing_time_ms": 78. 3
+  "explanation": "Moderate damage detected with high confidence. Repair-based estimate applied."
+}
+```
+
+---
+
+### 📍 POST `/assess_batch`
+
+Analyze multiple damage images at once (up to 6 images).
+
+**Description**
+- Processes each image independently
+- Aggregates final cost decision across all images
+- If any image requires manual review, the total is marked as pending
+
+**Request**
+```bash
+curl -X POST "http://localhost:8000/assess_batch" \
+  -F "files=@img1.jpg" \
+  -F "files=@img2.jpg"
+```
+
+**Response:**
+```json
+{
+  "batch_id": "3f1c1a9b-92c1-4a27-8e4a-5e4cdd2bfa10",
+  "items": [
+    {
+      "case_id": "c1",
+      "image_id": "img1.jpg",
+      "decision": {
+        "route": "AUTO",
+        "pricing_mode": "AUTO_POINT",
+        "estimated_cost_lkr": 18000
+      }
+    },
+    {
+      "case_id": "c2",
+      "image_id": "img2.jpg",
+      "decision": {
+        "route": "AUTO",
+        "pricing_mode": "AUTO_RANGE",
+        "cost_range_lkr": [25000, 40000]
+      }
+    }
+  ],
+  "final_total": {
+    "pricing_mode": "AUTO_RANGE",
+    "estimated_total_lkr": null,
+    "total_range_lkr": [43000, 58000],
+    "reason": "Total is a range because at least one damage requires replacement."
+  }
 }
 ```
 
@@ -385,41 +482,27 @@ curl http://localhost:8000/health
 **Response:**
 ```json
 {
-  "status": "healthy",
-  "model_loaded": true,
-  "version": "1.0.0"
+  "status": "ok"
 }
 ```
 
 ---
 
-### **Python Client Example**
 
-```python
-import requests
-from pathlib import Path
+#### **`GET /case/{case_id}`**
+Retrieve a previously processed case from the database.
 
-class AutoInspectClient:
-    def __init__(self, base_url="http://localhost:8000"):
-        self.base_url = base_url
-    
-    def predict(self, image_path:  str):
-        """Analyze vehicle damage."""
-        url = f"{self.base_url}/predict"
-        files = {"file": open(image_path, "rb")}
-        response = requests.post(url, files=files)
-        return response.json()
-    
-    def health_check(self):
-        """Check API health."""
-        response = requests.get(f"{self.base_url}/health")
-        return response.json()
+**Request:**
+```bash
+curl http://localhost:8000/case/8f4c9c4d-3c5e-4c1a-9c62-7c6e0b9c1a42
+```
 
-# Usage
-client = AutoInspectClient()
-result = client.predict("damaged_car.jpg")
-print(f"Severity: {result['severity']}")
-print(f"Cost: ${result['estimated_cost_usd']['min']}-${result['estimated_cost_usd']['max']}")
+---
+
+#### **`GET /report/{case_id}`**
+Download a JSON report for a processed case.
+```bash
+curl -O http://localhost:8000/report/8f4c9c4d-3c5e-4c1a-9c62-7c6e0b9c1a42
 ```
 
 ---
