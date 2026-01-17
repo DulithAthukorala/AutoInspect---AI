@@ -1,4 +1,4 @@
-# 🚗 AutoInspect AI — Decision-Grade Vehicle Damage Assessment
+# 🚗 AutoInspect AI — Automatic Vehicle Damage Detection
 
 <div align="center">
 
@@ -8,7 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688)
 ![License](https://img.shields.io/badge/license-Academic%20Use%20Only-orange)
 
-### **Production-Grade ML System for Automated Vehicle Damage Assessment**
+### **ML System for Automated Vehicle Damage Assessment**
 
 *Not just detection — decision support with explainability.*
 
@@ -24,7 +24,7 @@ This system is built using the **CarDD dataset** (research license) and is desig
 
 ---
 
-## 🎯 What Makes This Different
+## 🎯 What Makes AutoInspectAI Different
 
 **AutoInspect AI** is not another computer vision demo that stops at bounding boxes. 
 
@@ -43,7 +43,8 @@ This is a **complete decision support system** that mirrors how **real-world ins
 
 ## 📊 Performance
 
-### **Model Metrics** (YOLOv8n-seg on CarDD Dataset)
+### **Model Metrics** (YOLOv8n-seg on CarDD Dataset) 
+#### **GPU** : RTX 3060 12GB VRAM
 
 | Metric | Value | Notes |
 |--------|-------|-------|
@@ -59,7 +60,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 ### **Training Data**
 - **Training images:** 2,816
 - **Validation images:** 810
-- **Total dataset:** 3,626 images
+- **Total dataset:** 4,000 images
 - **Classes:** 6 (scratch, dent, crack, glass shatter, lamp broken, tire flat)
 - **Epochs:** 20 (YOLOv8n-seg)
 
@@ -70,7 +71,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 | YOLOv8n-seg | 20 | 12 | 73.8% | 3.1 | ✅ **Selected** |
 | YOLOv8m-seg | 85 | 9 | ~75.2% | 12.4 | ❌ Marginal gain, 4x slower |
 
-**Decision:** YOLOv8n-seg provides the best **speed/accuracy tradeoff** for real-time inspection use cases.
+**Decision:** YOLOv8n-seg selected - Gives best precision for the train time and size.
 
 ---
 
