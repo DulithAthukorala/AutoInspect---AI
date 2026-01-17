@@ -98,7 +98,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 ### **Streamlit Interface**
 
 <!-- TODO: Add screenshot of Streamlit UI showing upload, results, and explanation -->
-> **Caption:** Web interface for damage assessment with visual overlays and structured output
+> **Caption:** Web interface for damage assessment
 
 ![Streamlit UI Screenshot](./docs/images/streamlit_ui.png)
 
@@ -106,8 +106,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 
 ### **Sample Prediction Output**
 
-<!-- TODO: Add screenshot or example of JSON output with evidence, severity, cost, explanation -->
-> **Caption:** Structured JSON response with evidence, severity classification, cost estimate, and human-readable explanation
+
 
 ![Sample JSON Output](./docs/images/sample_json_output.png)
 
