@@ -117,16 +117,15 @@ This is a **complete decision support system** that mirrors how **real-world ins
 ### **🔬 Evidence-Based Decision Making**
 - **Pixel-accurate segmentation** using YOLOv8n-seg
 - **Structured evidence extraction:**
-  - Mask area (absolute pixels)
-  - Area ratio (% of vehicle surface)
+  - Damage Mask area (absolute pixels)
+  - Vehicle Area ratio (% of vehicle surface)
   - Damage type confidence scores
   - Multi-damage overlap detection
-- **Deterministic rule-based logic** (not black-box ML for decisions)
-- **Fully testable** severity and cost algorithms
+- **Deterministic rule-based logic file** (not black-box ML for decisions)
 
 ### **🎯 Production-Ready Architecture**
 - **Modular design:** Inference → Evidence → Logic → Explanation (separate layers)
-- **Zero business logic in UI** — all decisions in pure Python functions
+- **Zero business logic in UI** — all decisions in seperate python files as src
 - **Unit-tested core logic** (pytest suite)
 - **Stateless FastAPI service** (horizontally scalable)
 - **Dockerized deployment** (Docker Compose ready)
@@ -154,23 +153,23 @@ This is a **complete decision support system** that mirrors how **real-world ins
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   PREPROCESSING (inference. py)                  │
-│  • Resize to 640×448  • Normalize  • Tensor conversion          │
+│                   PREPROCESSING (inference. py)                 │
+│                • Resize to 640×448  • Normalize                 │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                 YOLOV8N-SEG MODEL (best.pt)                     │
 │  • Damage segmentation  • 6 classes  • Confidence scores        │
-│  • Output:  Masks + Bounding Boxes + Class Predictions           │
-└────────────────────────────┬───────────────────────��────────────┘
+│  • Output:  Masks + Bounding Boxes + Class Predictions          │
+└────────────────────────────┬───────────────────────��───────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              EVIDENCE EXTRACTION (evidence.py)                  │
 │  • Mask area (pixels)        • Area ratio (% coverage)          │
 │  • Confidence per damage     • Multi-damage overlaps            │
-│  • Output:  Structured JSON evidence                             │
+│  • Output:  Structured JSON evidence                            │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -183,20 +182,20 @@ This is a **complete decision support system** that mirrors how **real-world ins
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
-┌─────────────��───────────────────────────────────────────────────┐
+┌─────────────-───────────────────────────────────────────────────┐
 │             EXPLAINABILITY LAYER (explain.py)                   │
 │  • Generate human-readable justifications                       │
 │  • Map evidence → rules → conclusions                           │
-│  • Output:  Explanation text                                     │
+│  • Output:  Explanation text                                    │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      FINAL OUTPUT                               │
 │  {                                                              │
-│    "damages": [... ],                                            │
+│    "damages": [... ],                                           │
 │    "severity": "moderate",                                      │
-│    "estimated_cost": "$1,200 - $1,800",                         │
+│    "estimated_cost": "LKR 10,000 - 120,000",                    │
 │    "confidence": 0.87,                                          │
 │    "routing": "auto_approved",                                  │
 │    "explanation": "Detected moderate dent (4.2% area)..."       │
@@ -224,8 +223,8 @@ This is a **complete decision support system** that mirrors how **real-world ins
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/autoinspect-ai.git
-cd autoinspect-ai
+git clone https://github.com/DulithAthukorala/AutoInspect---AI.git
+cd Autoinspect---Ai
 
 # Start all services (API + Streamlit UI)
 docker compose up --build
@@ -235,32 +234,26 @@ docker compose up --build
 - **Streamlit UI:** http://localhost:8501
 - **FastAPI Backend:** http://localhost:8000
 - **API Docs:** http://localhost:8000/docs
-
-#### **Run API only (Docker)**
-
-```bash
-# Build the image
-docker build -t autoinspect-api .
-
-# Run the container
-docker run -p 8000:8000 autoinspect-api
-```
-
 ---
 
 ### **💻 Option 2: Local Setup (Python)**
 
+Model URL: https://huggingface.co/dulith-a/autoinspect-yolov8-seg/blob/main/best.pt
+
 ```bash
 # Clone and navigate
-git clone https://github.com/yourusername/autoinspect-ai.git
-cd autoinspect-ai
+git clone https://github.com/DulithAthukorala/AutoInspect---AI.git
+cd Autoinspect--Ai
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv venv           # on macos: python3 -m venv venv
+source venv/scripts/activate  # On macos: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements. txt
+
+# Upload the Model to this path
+app/models/best.pt
 
 # Run Streamlit UI
 python app_streamlit.py
@@ -269,101 +262,71 @@ python app_streamlit.py
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
----
-
-### **⚡ Quick Test (60 seconds)**
-
-```bash
-# Test API health
-curl http://localhost:8000/health
-
-# Run inference (replace with your image path)
-curl -X POST "http://localhost:8000/predict" \
-  -F "file=@sample_images/damaged_car.jpg"
-```
-
-**Python client example:**
-
-```python
-import requests
-
-url = "http://localhost:8000/predict"
-files = {"file": open("damaged_car.jpg", "rb")}
-response = requests.post(url, files=files)
-
-print(response.json())
-```
-
----
 
 ## 📁 Project Structure
 
 ```
 autoinspect-ai/
-├── src/                          # Core business logic (zero UI code)
-│   ├── inference.py              # Model loading & raw YOLOv8 predictions
-│   ├── evidence. py               # Mask → structured numeric evidence
-│   ├── logic.py                  # Severity, cost, routing (pure functions)
-│   ├── explain.py                # Rule-based explanation generation
-│   ├── vehicle_mask. py           # Vehicle segmentation utilities
-│   └── quality. py                # Image quality checks
 │
-├── api/                          # FastAPI inference service
-│   ├── main.py                   # API routes & endpoints
-│   ├── models. py                 # Pydantic request/response schemas
-│   └── config.py                 # Configuration management
+├── app/
+│   ├── api/
+│   │   └── app_fastapi.py        # FastAPI backend (inference API)
+│   │
+│   └── ui/
+│       ├── app_streamlit.py      # Streamlit frontend (UI only)
+│       ├── hw_to_take.jpg        # User instruction image
+│       └── style.css             # UI styling
 │
-├── app_streamlit.py              # Streamlit UI (presentation only)
-├── tests/                        # pytest unit tests
-│   ├── test_logic.py             # Decision logic tests
-│   ├── test_evidence.py          # Evidence extraction tests
-│   └── test_api.py               # API endpoint tests
+├── src/
+│   ├── core/
+│   │   └── weights.py            # HF download helper (can be unused)
+│   │
+│   ├── inference.py              # YOLO model loading + prediction
+│   ├── vehicle_mask.py           # Vehicle segmentation utilities
+│   ├── evidence.py               # Convert YOLO outputs → structured evidence
+│   ├── logic.py                  # Severity, cost, routing logic
+│   ├── explain.py                # Rule-based explanations
+│   ├── quality.py                # Image quality checks
+│   ├── storage.py                # Save uploaded images
+│   └── db.py                     # SQLite persistence
 │
-├── notebooks/                    # Jupyter notebooks (EDA only)
-│   ├── 01_eda.ipynb              # Dataset exploration
-│   └── 02_model_analysis.ipynb   # Performance analysis
+├── app/
+│   └── models/
+│       └── best.pt               # ❗ YOLOv8 trained weights (NOT committed) / can be download through HF
 │
-├── models/                       # Model weights
-│   └── best.pt                   # YOLOv8n-seg trained weights
+├── data/
+│   ├── CarDD_COCO/               # Dataset (train/val/test)
+│   ├── cases/                    # Stored inference cases
+│   └── data_integrity_check/
 │
-├── sample_images/                # Example test images
-├── docs/                         # Documentation & images
-│   └── images/                   # Screenshots, diagrams, etc.
+├── runs/
+│   └── segment/
+│       └── train/
+│           └── weights/
+│               ├── best.pt       # Training output (source model)
+│               └── last.pt
 │
-├── Dockerfile                    # Container definition
+├── docs/
+│   └── images/                   # README screenshots, diagrams
+│
+├── tests/
+│   ├── test_logic.py
+│   ├── test_evidence.py
+│   └── test_api.py
+│
+├── Dockerfile.api                # FastAPI container
+├── Dockerfile.api.gpu            # GPU-enabled FastAPI container
+├── Dockerfile.ui                 # Streamlit container
 ├── docker-compose.yml            # Multi-service orchestration
-├── requirements.txt              # Python dependencies
-├── . dockerignore
-├── . gitignore
-└── README. md
+│
+├── requirements.api.txt          # API dependencies
+├── requirements.ui.txt           # UI dependencies
+│
+├── .dockerignore
+├── .gitignore
+├── README.md
 ```
 
-### **Design Philosophy**
-
-```python
-# ❌ WRONG: Business logic in UI
-def streamlit_app():
-    if mask_area > threshold:  # ← Logic lives in UI! 
-        severity = "high"
-
-# ✅ CORRECT: Pure, testable functions
-# src/logic.py
-def calculate_severity(evidence:  Evidence) -> str:
-    """Deterministic severity classification."""
-    if evidence. area_ratio > 0.05: 
-        return "high"
-    return "low"
-
-# app_streamlit.py
-severity = calculate_severity(evidence)  # ← UI just calls logic
-```
-
-**Every decision is:**
-- ✅ Unit-tested
-- ✅ Independently callable
-- ✅ Framework-agnostic
-
----
 
 ## 📡 API Documentation
 
