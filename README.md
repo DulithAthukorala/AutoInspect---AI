@@ -349,28 +349,6 @@ Analyze a **single vehicle damage image**.
 ```bash
 curl -X POST "http://localhost:8000/assess" \
   -F "file=@path/to/damaged_car.jpg"
-
-
-**Request:**
-```bash
-curl -X POST "http://localhost:8000/asses" \
-  -F "file=@path/to/damaged_car.jpg"
----
-
-### 📍 POST `/assess`
-
-Analyze a **single vehicle damage image**.
-
-**Description**
-- Runs image quality checks
-- Performs YOLOv8 damage detection
-- Applies rule-based severity, confidence, and pricing logic
-- Returns structured explanation and decision
-
-**Request**
-```bash
-curl -X POST "http://localhost:8000/assess" \
-  -F "file=@path/to/damaged_car.jpg"
 ```
 
 **Response:**
