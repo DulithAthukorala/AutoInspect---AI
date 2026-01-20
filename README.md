@@ -325,7 +325,7 @@ single-image assessment, batch processing, health checks, and report retrieval.
 
 ---
 
-### 📍 POST `/assess`
+### 📍 POST **`/assess`**
 
 Analyze a **single vehicle damage image**.
 
@@ -388,7 +388,7 @@ curl -X POST "http://localhost:8000/assess" \
 
 ---
 
-### 📍 POST `/assess_batch`
+### 📍 POST **`/assess_batch`**
 
 Analyze multiple damage images at once (up to 6 images).
 
@@ -439,7 +439,7 @@ curl -X POST "http://localhost:8000/assess_batch" \
 
 ---
 
-#### **`GET /health`**
+### 📍 **`GET /health`**
 Service health check.
 
 **Request:**
@@ -457,7 +457,7 @@ curl http://localhost:8000/health
 ---
 
 
-#### **`GET /case/{case_id}`**
+### 📍 **`GET /case/{case_id}`**
 Retrieve a previously processed case from the database.
 
 **Request:**
@@ -467,7 +467,7 @@ curl http://localhost:8000/case/8f4c9c4d-3c5e-4c1a-9c62-7c6e0b9c1a42
 
 ---
 
-#### **`GET /report/{case_id}`**
+#### 📍 **`GET /report/{case_id}`**
 Download a JSON report for a processed case.
 ```bash
 curl -O http://localhost:8000/report/8f4c9c4d-3c5e-4c1a-9c62-7c6e0b9c1a42
