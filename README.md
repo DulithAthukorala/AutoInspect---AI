@@ -80,18 +80,8 @@ This is a **complete decision support system** that mirrors how **real-world ins
 ### **Damage Segmentation Output**
 
 <!-- TODO: Add image showing original damaged vehicle image with segmentation masks overlaid -->
-> **Caption:** Pixel-accurate segmentation of multiple damage types with confidence scores
 
 ![Sample Output - Damage Segmentation](./docs/images/sample_segmentation.png)
-
----
-
-### **System Architecture**
-
-<!-- TODO: Add architecture diagram showing:  Image → YOLOv8-Seg → Evidence Extraction → Decision Logic → Output -->
-> **Caption:** End-to-end pipeline from raw image to actionable decision with explainability
-
-![Architecture Diagram](./docs/images/architecture_diagram.png)
 
 ---
 
