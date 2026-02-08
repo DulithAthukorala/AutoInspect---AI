@@ -816,22 +816,6 @@ def test_severity_classification_threshold():
 - ⚠️ Scratch/dent slightly lower (more subtle, variable appearances)
 - ✅ All classes >70% recall (acceptable for decision support)
 
----
-
-### **Speed Breakdown**
-
-| Stage | Time (ms) | % of Total |
-|-------|-----------|-----------|
-| Image preprocessing | 1.8 | 2.3% |
-| YOLOv8 inference | 63.1 | 79.5% |
-| Postprocessing (NMS) | 14.5 | 18.2% |
-| **Total (model)** | **79.4** | **100%** |
-| Evidence extraction | +2.1 | - |
-| Decision logic | +0.3 | - |
-| Explanation generation | +0.8 | - |
-| **Total (end-to-end)** | **~82. 6** | - |
-
-**Bottleneck:** YOLOv8 inference (expected for segmentation models)
 
 ---
 
@@ -869,9 +853,5 @@ def test_severity_classification_threshold():
 <div align="center">
 
 ### ⭐ If this project helped you understand how real ML products are built, consider starring it! 
-
-**Built with ❤️ for the ML engineering community**
-
-[⬆ Back to Top](#-autoinspect-ai--decision-grade-vehicle-damage-assessment)
 
 </div>
