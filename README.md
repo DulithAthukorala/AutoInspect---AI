@@ -79,7 +79,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 
 ### **Damage Segmentation Output**
 
-<!-- TODO: Add image showing original damaged vehicle image with segmentation masks overlaid -->
+
 
 ![Sample Output - Damage Segmentation](./docs/images/sample_segmentation.png)
 
@@ -87,8 +87,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 
 ### **Streamlit Interface**
 
-<!-- TODO: Add screenshot of Streamlit UI showing upload, results, and explanation -->
-> **Caption:** Web interface for damage assessment
+
 
 ![Streamlit UI Screenshot](./docs/images/streamlit_ui.png)
 
