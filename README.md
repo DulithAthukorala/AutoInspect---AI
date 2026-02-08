@@ -152,7 +152,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 │                 YOLOV8N-SEG MODEL (best.pt)                     │
 │  • Damage segmentation  • 6 classes  • Confidence scores        │
 │  • Output:  Masks + Bounding Boxes + Class Predictions          │
-└────────────────────────────┬───────────────────────��───────────┘
+└────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -172,7 +172,7 @@ This is a **complete decision support system** that mirrors how **real-world ins
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
-┌─────────────-───────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────────┐
 │             EXPLAINABILITY LAYER (explain.py)                   │
 │  • Generate human-readable justifications                       │
 │  • Map evidence → rules → conclusions                           │
