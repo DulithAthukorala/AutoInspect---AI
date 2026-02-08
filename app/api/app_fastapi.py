@@ -17,7 +17,6 @@ from src.logic import (
     decide_case,
     CaseEvidence,
     Decision,
-    filter_meaningful_damages,
 )
 from src.explain import generate_explanation
 from src.db import init_db, insert_case, get_case
@@ -329,7 +328,7 @@ def health():
 
 
 @app.post("/assess", response_model=AssessResponse)
-async def assess_image(file: UploadFile = File(...)):
+async def assess_image(file: UploadFile = File(...)): # async used to handle file read without stopping the process
     if file.content_type not in {"image/jpeg", "image/png", "image/jpg"}:
         raise HTTPException(status_code=400, detail="Upload a JPG or PNG image.")
 
